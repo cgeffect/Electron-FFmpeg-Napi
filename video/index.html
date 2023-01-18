@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vite + TS</title>
+    <style>
+      #id {
+        display: flex; 
+        flex-direction: column;
+      }
+      #video-controller {
+        margin: 0 0 0 -2px;
+        padding: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="video-canvas"></canvas>
+      <input id="video-controller" type="range" min="0" max="100" value="0" />
+      <div>
+        <button id="video-play">播放🎵</button>
+        <button id="video-stop">暂停⏸️</button>
+      </div>
+      
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
