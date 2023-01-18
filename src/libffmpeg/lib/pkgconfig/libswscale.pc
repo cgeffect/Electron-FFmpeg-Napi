@@ -1,0 +1,14 @@
+prefix=/home/wasm/ffmpeg/../decoder/libffmpeg
+exec_prefix=${prefix}
+libdir=/home/wasm/ffmpeg/../decoder/libffmpeg/lib
+includedir=/home/wasm/ffmpeg/../decoder/libffmpeg/include
+
+Name: libswscale
+Description: FFmpeg image rescaling library
+Version: 6.7.100
+Requires: libavutil >= 57.28.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lswscale -lm
+Libs.private: 
+Cflags: -I${includedir}
