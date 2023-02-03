@@ -26,7 +26,7 @@ emcc -std=c++17 \
     -s ENVIRONMENT="web" \
     -s EXPORT_ES6=1 \
     -s USE_ES6_IMPORT_META=0 \
-    -O2 \
+    -O3 \
     -o ./dist/libffmpeg.js
 
 echo "build success!"

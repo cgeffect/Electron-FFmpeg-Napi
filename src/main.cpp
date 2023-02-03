@@ -36,6 +36,9 @@ uint8_t *read_file_memory(const char *path, size_t *length)
     return data;
 }
 
+/*
+ 手动触发暂停播放, 要等seek成功之后才能继续播放
+ */
 #pragma mark - js callback
 typedef void (*JSVideoDecodeCallback)(unsigned char *y,
                                       unsigned char *u,
@@ -53,15 +56,15 @@ typedef void (*JSVideoInfoCallback)(int width,
                                  float fps);
      
 
-void JS_VideoDecodeCallback(unsigned char *y,
-                         unsigned char *u,
-                         unsigned char *v,
-                         int line1,
-                         int line2,
-                         int line3,
-                         int width,
-                         int height,
-                         long pts) {
+void JS_VideoDecodeFunc(unsigned char *y,
+                        unsigned char *u,
+                        unsigned char *v,
+                        int line1,
+                        int line2,
+                        int line3,
+                        int width,
+                        int height,
+                        long pts) {
 #ifdef __APPLE__
 //        enum AVPixelFormat pixelForamt = (AVPixelFormat)frame->format;
      int y_size = width * height;
@@ -75,13 +78,12 @@ void JS_VideoDecodeCallback(unsigned char *y,
 //    fwrite(frame->data[0], 1, frame->width * frame->height * 4, outFile);
 #else
 #endif
-
 }
 
-void JS_VideoInfoCallback(int width,
-                        int height,
-                        int durationMs,
-                       float fps) {
+void JS_VideoInfoFunc(int width,
+                      int height,
+                      int durationMs,
+                      float fps) {
   _durationMs = durationMs;
 }
 
@@ -94,24 +96,22 @@ JSDecodeContext *pDecodeCtx = NULL;
 
 #pragma mark - c callback
 void InitCallbackFunc(VideoInfo info) {
-     printf("%d %d %d %f\n", info.width, info.height, info.durationMs, info.fps);
-     if (pDecodeCtx->js_infoCallback) {
-         pDecodeCtx->js_infoCallback(info.width, info.height, info.durationMs, info.fps);
-     }
- }
+    printf("%d %d %d %f\n", info.width, info.height, info.durationMs, info.fps);
+    if (pDecodeCtx->js_infoCallback) {
+        pDecodeCtx->js_infoCallback(info.width, info.height, info.durationMs, info.fps);
+    }
+}
+
 void DecodeCallbackFunc(AVFrame *frame, float ptsMs) {
     if (pDecodeCtx->js_decodeCallback) {
         pDecodeCtx->js_decodeCallback(frame->data[0], frame->data[1], frame->data[2], frame->linesize[0], frame->linesize[1], frame->linesize[2], frame->width, frame->height, ptsMs);
     }
 }
-     
+
 #pragma mark - js interface
 long ffwasm_decode_open(uint8_t *data, size_t length, long jscallback) {
 //    const char *config = avcodec_configuration();
 //    printf("open_decode === \n%s\n", config);
-
-    printf("data = %s, length = %zu, callback = %ld\n", data, length, jscallback);
-    
     pDecodeCtx = (JSDecodeContext *)malloc(sizeof(JSDecodeContext));
     if (!pDecodeCtx) {
         return -1;
@@ -162,10 +162,11 @@ int ffwasm_seek_frame(long handle, float ptsMs, long jscallback) {
 long ffwasm_decode_free(long handle) {
     return ffcpp_decode_free(handle);
 }
-     
+
 #ifdef __cplusplus
  }
 #endif
+
 
 #include <chrono>
 #include <thread>
@@ -193,14 +194,14 @@ int main(int argc, const char * argv[]) {
 #ifdef TEST
     _av_io_decode_test(data, length, "/Users/jason/Jason/mogic/ffwasm/res/1920_1080.yuv");
 #else
-    long handle = ffwasm_decode_open(data, length, (long)JS_VideoInfoCallback);
+    long handle = ffwasm_decode_open(data, length, (long)JS_VideoInfoFunc);
     
     float pts = 0;
     while (pts <= _durationMs) {
-        long ret = ffwasm_decode_frame(handle, pts, (long)JS_VideoDecodeCallback);
-        ff_log("index %f\n", pts);
+        long ret = ffwasm_decode_frame(handle, pts, (long)JS_VideoDecodeFunc);
+        ff_log("index %f", pts);
         if (ret < 0) {
-            ff_log("decode error\n");
+            ff_log("decode error");
             break;
         }
         pts += 30;

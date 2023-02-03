@@ -1,11 +1,14 @@
 dist
 *.dSYM
 build
-web/node_modules
+node_modules
+libffwasm
+node_modules
+ffmpegkit
 res
 a.out.js
 a.out.wasm
 *.mp4
 package-lock.json
-web/ffmpegkit
-video/libffwasm
+*.wasm
+

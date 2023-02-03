@@ -55,7 +55,6 @@ function setStyle(width: number, height: number) {
       width,
       height,
     }
-    console.log(time)
     yuvCanvas.play(yuvObject)
   }
   const drawYUVFrameP = module.addFunction(drawYUVFrame, 'viiiiiiiii')
@@ -71,7 +70,7 @@ function setStyle(width: number, height: number) {
     setStyle(width, height)
   }
   const videoInfoCallbackP = module.addFunction(videoInfoCallback, 'viiif')
-  const res = await fetch('/src/assets/test.mp4')
+  const res = await fetch('/src/assets/640.mp4')
   const videoData = await res.arrayBuffer()
   const videoDataP = module._malloc(videoData.byteLength)
   const heap = new Uint8Array(module.HEAPU8.buffer, videoDataP, videoData.byteLength)
@@ -84,9 +83,9 @@ function setStyle(width: number, height: number) {
 
   const draw = (time: number, onError?: () => void) => {
     if (time < videoInfo.duration) {
-      const start = Date.now()
+      console.log("\n")
+      console.log("----- start pts", time)
       const r = module._ffwasm_decode_frame(ret, time, drawYUVFrameP)
-      console.log('耗时', Date.now() - start)
       if (r < 0)
         onError && onError()
     }
@@ -94,9 +93,9 @@ function setStyle(width: number, height: number) {
 
   const seekdraw = (time: number, onError?: () => void) => {
     if (time < videoInfo.duration) {
-      const start = Date.now()
+      console.log("\n")
+      console.log("----- start pts", time)
       const r = module._ffwasm_seek_frame(ret, time, drawYUVFrameP)
-      console.log('耗时', Date.now() - start)
       if (r < 0)
         onError && onError()
     }

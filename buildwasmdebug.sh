@@ -9,7 +9,8 @@ export FUNCTIONS="['_ffwasm_decode_open','_ffwasm_decode_frame','_ffwasm_decode_
 
 #-fdebug-compilation-dir='.' c 代码路径, 相对于ffmpeg.js的目录
 #-g 
-emcc -g -std=c++17 \
+#EMCC_DEBUG=1
+EMCC_AUTODEBUG=1 emcc -g -std=c++17 \
     ./src/main.cpp ./src/ffdecode.cpp \
     -fdebug-compilation-dir='.' \
     ./third/libffmpeg/lib/libavcodec.a ./third/libffmpeg/lib/libavformat.a ./third/libffmpeg/lib/libavutil.a ./third/libffmpeg/lib/libswscale.a \
@@ -29,6 +30,7 @@ emcc -g -std=c++17 \
     -s ENVIRONMENT="web" \
     -s EXPORT_ES6=1 \
     -s USE_ES6_IMPORT_META=0 \
+    -D __FFWASM__ \
     -o ./dist/libffmpeg.js
 
 echo "build success!"

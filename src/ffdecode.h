@@ -2,12 +2,22 @@
 #ifndef ff_decode_h
 #define ff_decode_h
 
-//#define __FFDEBUG__
-#ifdef __FFDEBUG__
+#ifdef __APPLE__
+#define __FFWASM__
+#else
+#endif
+
+#ifdef __FFWASM__
 #define ff_log(format,...) printf("FILE: " __FILE__ ", LINE: %d: " format "\n", __LINE__, ##__VA_ARGS__)
 #else
 #define ff_log(format,...)
 #endif
+
+#define AV_LOG_ERROR    16
+#define AV_LOG_WARNING  24
+#define AV_LOG_INFO     32
+#define AV_LOG_VERBOSE  40
+#define AV_LOG_DEBUG    48
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,7 +27,6 @@ extern "C" {
 #include <stdint.h>
 #include <libavformat/avformat.h>
 #include <stdbool.h>
-//#include <pthread.h>
 #include <libswscale/swscale.h>
 #include <libavcodec/avcodec.h>
 
@@ -30,12 +39,6 @@ typedef struct VideoInfo {
 
 typedef void (*DecodeCallback)(AVFrame *frame, float PtsMs);
 typedef void (*InitCallback)(VideoInfo info);
-
-#define AV_LOG_ERROR    16
-#define AV_LOG_WARNING  24
-#define AV_LOG_INFO     32
-#define AV_LOG_VERBOSE  40
-#define AV_LOG_DEBUG    48
 
 void set_log_level(int level);
 
@@ -83,15 +86,16 @@ typedef struct FFCodecContext {
     int avio_ctx_buffer_size;
     
     AVFrame *swsFrame;
-    struct SwsContext *swsContext;
+    struct SwsContext *sws_context;
     int video_stream_index;
     AVStream *video_stream;
     float *keyFrameList;
     int keyFrameCount;
     bool packet_eof;
     bool decode_eof;
-    float frameRate;
+    float frame_rate;
     bool error_exit;
+    float durationMs;
     
 } FFCodecContext;
 
@@ -104,18 +108,24 @@ enum FFStrategyState {
     STRATEGY_ACCELERATE_BACKWARD = 6 // 向后加速解码
 };
 
+enum FF_DECODE_EVENT {
+    DECODE_EVENT_NONE = 0,
+    DECODE_EVENT_INIT,
+    DECODE_EVENT_DECODE,
+    DECODE_EVENT_WILL_SEEK,
+    DECODE_EVENT_SEEK,
+    DECODE_EVENT_DID_SEEK,
+    DECODE_EVENT_STOP,
+};
+
 typedef struct FFVideoState {
     float video_consume_pts;       // 消费的pts
     float video_prev_consume_pts;  // 实际解码的pts
     float video_decode_frame_pts;  // 实际解码的pts
-    int        seek_req;           // 标识一次seek请求
-    int        seek_flags;         // seek标志，诸如AVSEEK_FLAG_BYTE等
-    int64_t        seek_pos;       // 请求seek的目标位置(当前位置+增量)
-    int64_t        seek_rel;       // 本次seek的位置增量, >0 向前seek, <0向后seek
     enum FFStrategyState strategy;
     
-    float timeThreshold;           // 解码落后阈值，按一帧时间算
-    float seekThreshold;           // seek 阈值
+    float threshold;           // 解码落后阈值，按一帧时间算
+    float seek_threshold;           // seek 阈值
 
     FFCodecContext *ioCodecCtx;
 
@@ -126,6 +136,9 @@ typedef struct FFVideoState {
     
     enum AVPixelFormat pixelFormat;
     bool seek = false;
+    
+    FF_DECODE_EVENT event;
+    
 } FFVideoState;
 
 class ffdecode

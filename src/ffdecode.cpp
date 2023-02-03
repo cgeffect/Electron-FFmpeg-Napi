@@ -66,9 +66,6 @@ int _av_io_decode_test(uint8_t *heapData, size_t file_len, const char *outputFil
 #define FF_DECODE_OK 0
 #define AVIO_BUFFER_SIZE 4096
 #define VIDEO_PICTURE_QUEUE_SIZE    3       // 图像帧缓存数量
-#define SUBPICTURE_QUEUE_SIZE        16      // 字幕帧缓存数量
-#define SAMPLE_QUEUE_SIZE           9       // 采样帧缓存数量
-#define FRAME_QUEUE_SIZE FFMAX(SAMPLE_QUEUE_SIZE, FFMAX(VIDEO_PICTURE_QUEUE_SIZE, SUBPICTURE_QUEUE_SIZE))
 
 static unsigned sws_flags = SWS_BICUBIC;
 
@@ -80,15 +77,19 @@ static int read_packet_ptr(void *opaque, uint8_t *buf, int buf_size)
 {
     FFBufferData *bd = (FFBufferData *)opaque;
     buf_size = MIN((int)bd->has_size, buf_size);
-
-//    printf("buf is %p \n", buf);
+    
+    if (buf == NULL) {
+        av_log(NULL, AV_LOG_ERROR, "no buf pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
+        return EAGAIN;
+    }
     if (!buf_size)
     {
-//        printf("no buf_size pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
+        av_log(NULL, AV_LOG_ERROR, "no buf_size pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
         return EAGAIN;
     }
     if (buf_size <= 0) {
-        return -1;
+        av_log(NULL, AV_LOG_ERROR, "1no buf_size pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
+        return EAGAIN;
     }
 //    float a = SIZE_MAX;
 //    printf("ptr in file:%p io.buffer ptr:%p, has_size:%zu,buf_size:%d\n", bd->ptr, buf, bd->has_size, buf_size);
@@ -116,32 +117,16 @@ static int64_t seek_in_buffer_ptr(void *opaque, int64_t offset, int whence)
         bd->has_size = bd->file_size - offset;
         ret = (int64_t)bd->ptr;
         break;
+        default:
+            av_log(NULL, AV_LOG_ERROR, "offset %lld, whence %d\n", offset, whence);
     }
     return ret;
 }
 
 FILE * outfile;
-float getDurationSEC(FFCodecContext *ioCodecCtx) {
-    if (!ioCodecCtx->fmt_ctx) {
-        return 0;
-    }
-    if (ioCodecCtx->fmt_ctx->duration == AV_NOPTS_VALUE) {
-        AVStream *videoStream = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]; // 音频流、视频流、字幕流
-        if (videoStream) {
-            return videoStream->duration * av_q2d(videoStream->time_base);
-        }
-        return -1;
-    }
-    return 1.0f * ioCodecCtx->fmt_ctx->duration / AV_TIME_BASE;
-}
-
-float getVideoStreamDurationSEC(FFCodecContext *ioCodecCtx) {
+float get_videostream_durationMs(FFCodecContext *ioCodecCtx) {
     AVStream *videoStream = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]; // 音频流、视频流、字幕流
-    if (videoStream) {
-        return videoStream->duration * av_q2d(videoStream->time_base);
-    } else {
-        return getDurationSEC(ioCodecCtx);
-    }
+    return videoStream->duration * av_q2d(videoStream->time_base) * 1000;
 }
 
 int _flush_decode_buffer(FFCodecContext *ioCodecCtx) {
@@ -163,8 +148,7 @@ AVSEEK_FLAG_FRAME 8 ///< seeking based on frame number 基于帧数量的跳转
  */
 int _ff_stream_seek(FFCodecContext *ioCodecCtx, float seekMs) {
     AVFormatContext *avFormatContext = ioCodecCtx->fmt_ctx;
-    float durationMs = getDurationSEC(ioCodecCtx) * 1000;
-    if (seekMs >= durationMs) {
+    if (seekMs >= ioCodecCtx->durationMs) {
         av_log(NULL, AV_LOG_ERROR, "seekToMs seek time error, seek time out of file\n");
         return -1;
     }
@@ -179,7 +163,7 @@ int _ff_stream_seek(FFCodecContext *ioCodecCtx, float seekMs) {
             av_log(NULL, AV_LOG_ERROR, "ERROR: seekToMs av_seek_frame error msg: %s\n", av_err2str(ret));
             return ret;
         } else {
-            ff_log("seek to: %f, total duration: %f\n", seekMs, durationMs);
+            ff_log("seek to: %f, total duration: %f", seekMs, ioCodecCtx->durationMs);
         }
     }
     _flush_decode_buffer(ioCodecCtx);
@@ -204,9 +188,9 @@ int _ff_parser_keyframes(FFCodecContext *ioCodecCtx) {
             int64_t pts = packet.pts;
             float ptsMs = packet.pts * av_q2d(avFormatCtx->streams[video_stream_index]->time_base) * 1000;
             if (isKeyFrame) {
-                ff_log("key frame %d, index: %lld, ptsMs: %f\n", frameIndex, pts, ptsMs);
+                ff_log("key frame %d, index: %lld, ptsMs: %f", frameIndex, pts, ptsMs);
                 ioCodecCtx->keyFrameList[index] = ptsMs;
-                ff_log("key frame1 %f, count = %d\n",ioCodecCtx->keyFrameList[index], index);
+                ff_log("key frame1 %f, count = %d",ioCodecCtx->keyFrameList[index], index);
                 index++;
                 if (index > keyframeCount) {
                     av_log(NULL, AV_LOG_DEBUG, "decode error: keyframeCount > %d", index);
@@ -225,7 +209,7 @@ int _ff_parser_keyframes(FFCodecContext *ioCodecCtx) {
 }
 
 // 找当前pts依赖的I帧
-float _dependKeyFrame(FFCodecContext *ioCodecCtx, float newPts) {
+float _ff_depend_keyframe(FFCodecContext *ioCodecCtx, float newPts) {
     float newKey = -1;
     int maxIndex = (int) (ioCodecCtx->keyFrameCount - 1);
     for (int i = maxIndex; i >= 0; i--) {
@@ -239,42 +223,27 @@ float _dependKeyFrame(FFCodecContext *ioCodecCtx, float newPts) {
 }
 
 bool _ff_is_same_gop(FFCodecContext *ioCodecCtx, float currentPts, float prevPts) {
-    float currentKey = _dependKeyFrame(ioCodecCtx, currentPts);
-    float prevKey = _dependKeyFrame(ioCodecCtx, prevPts);
+    float currentKey = _ff_depend_keyframe(ioCodecCtx, currentPts);
+    float prevKey = _ff_depend_keyframe(ioCodecCtx, prevPts);
     return currentPts >= prevPts && currentKey == prevKey;
 }
 
-int _ff_writer_yuv(FFCodecContext *ioCodecCtx, float consume_pts) {
-#ifdef __APPLE__
-//    enum AVPixelFormat pixelForamt = (AVPixelFormat)ioCodecCtx->srcFrame->format;
-    int y_size = ioCodecCtx->swsFrame->width * ioCodecCtx->swsFrame->height;
-    int u_size = y_size / 4;
-    int v_size = y_size / 4;
-
-    fwrite(ioCodecCtx->swsFrame->data[0], 1, y_size, outfile);//Y
-    fwrite(ioCodecCtx->swsFrame->data[1], 1, u_size ,outfile);//U:宽高均是Y的一半
-    fwrite(ioCodecCtx->swsFrame->data[2], 1, v_size, outfile);//V:宽高均是Y的一半
-#endif
-    float ptsMs = ioCodecCtx->srcFrame->pts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
-    float dtsMs = ioCodecCtx->srcFrame->pkt_dts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
-
-    ff_log("ff_writer_yuv pict_type: %d, pts: %f, dts: %f, consume: %f\n", ioCodecCtx->srcFrame->pict_type, ptsMs, dtsMs, consume_pts);
-
-    return 0;
-}
-
 int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
+    if (ioCodecCtx->packet_eof) {
+        return AVERROR_EOF;
+    }
     while (true) {
         int ret = av_read_frame(ioCodecCtx->fmt_ctx, ioCodecCtx->avpacket);
         if (ret == FF_DECODE_OK) {
-            // 跳过不处理音频包
             if (ioCodecCtx->video_stream_index != ioCodecCtx->avpacket->stream_index) {
                 av_packet_unref(ioCodecCtx->avpacket);
                 continue;
             }
             float ptsMs = ioCodecCtx->avpacket->pts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
+            float dtsMs = ioCodecCtx->avpacket->dts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
+
             bool isKeyFrame = ioCodecCtx->avpacket->flags & AV_PKT_FLAG_KEY;
-            ff_log("key frame %d, pts: %lld, ptsMs: %f\n", isKeyFrame, ioCodecCtx->avpacket->pts, ptsMs);
+            ff_log("read packet keyframe %d, ptsMs: %f, dtsMs %f", isKeyFrame, ptsMs, dtsMs);
 
             avcodec_send_packet(ioCodecCtx->avcodec_context, ioCodecCtx->avpacket);
             av_packet_unref(ioCodecCtx->avpacket);
@@ -283,14 +252,13 @@ int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
         } else {
             if (ret == AVERROR_EOF) {
                 // 读取完文件，这时候 pkt 的 data 跟 size 应该是 null
-//                avcodec_send_packet(ioCodecCtx->avcodec_context, NULL);
+                avcodec_send_packet(ioCodecCtx->avcodec_context, NULL);
                 ioCodecCtx->packet_eof = true;
-                ioCodecCtx->decode_eof = true;
-                return FF_DECODE_OK;
+                return ret;
             } else if (ret == AVERROR(EAGAIN)) {
 //                continue; //这里需要缓存, 尝试再次发送
                 av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet ret %d, %s\n", ret, av_err2str(ret));
-                return FF_DECODE_OK; //验证下是否需要特殊处理???
+                return ret; //验证下是否需要特殊处理???
             } else {
                 av_log(NULL, AV_LOG_ERROR, "ERROR: read error code %d, %s \n", ret, av_err2str(ret));
                 return ret;
@@ -310,7 +278,7 @@ int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
      * */
     // av_frame_unref(frame);
     if (ret == 0) {
-        int height = sws_scale(ioCodecCtx->swsContext,
+        int height = sws_scale(ioCodecCtx->sws_context,
                                (const uint8_t *const *)ioCodecCtx->srcFrame->data, ioCodecCtx->srcFrame->linesize,
                                0, ioCodecCtx->srcFrame->height,
                                ioCodecCtx->swsFrame->data,
@@ -339,9 +307,8 @@ int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
 bool task_stop;
 #pragma mark - decode thread
 int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **outFrame) {
-    if (videoState == NULL || consume_pts < 0 || outFrame == NULL) {
-//        printf("%s(%d) discontinue:queue->serial:%d,pkt_serial:%d\n",
-//               __FUNCTION__, __LINE__, d->queue->serial, d->pkt_serial);
+    if (videoState == NULL || consume_pts < 0 || outFrame == NULL || consume_pts > videoState->ioCodecCtx->durationMs) {
+        av_log(NULL, AV_LOG_ERROR, "decode param error\n");
         return -1;
     }
     struct timespec begin, end;
@@ -349,49 +316,48 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
         
     videoState->running = true;
 //    printf("running start\n");
-    ff_log("ff_decode_frame_unit %f\n", consume_pts);
+    ff_log("ff_decode_frame_unit consume_pts %f", consume_pts);
     FFCodecContext *ioCodecCtx = videoState->ioCodecCtx;
-    
     int ret = 0;
-
     if (ioCodecCtx->error_exit) {
         av_log(NULL, AV_LOG_ERROR, "ERROR: decode error exit!\n");
-        return -1;
+        return 1;
     }
     if (ioCodecCtx->decode_eof) {
-        av_log(NULL, AV_LOG_ERROR, "all frame has been decode\n");
-        return -1;
+        av_log(NULL, AV_LOG_ERROR, "All frame has been decode\n");
+        return 1;
     }
     
     if (ioCodecCtx->packet_eof) {
-        return -1;
+//        av_log(NULL, AV_LOG_ERROR, "all frame has been packet_eof\n");
+//        return -1;
 
     }
     
     videoState->video_consume_pts = consume_pts;
     
     //先找缓存
-    if (consume_pts != 0 && (videoState->video_decode_frame_pts >= consume_pts || fabsf(videoState->video_decode_frame_pts - consume_pts) < fabsf(videoState->timeThreshold))) {
+    if ((videoState->video_decode_frame_pts >= consume_pts || fabsf(videoState->video_decode_frame_pts - consume_pts) < fabsf(videoState->threshold))) {
         //    ff_writer_yuv(ioCodecCtx, consume_pts);
         *outFrame = ioCodecCtx->swsFrame;
-        ff_log("cache consume_pts %f pts %f\n", consume_pts, videoState->video_decode_frame_pts);
-        videoState->video_decode_frame_pts = -100;
+        ff_log("hit cache consume_pts %f cache pts %f", consume_pts, videoState->video_decode_frame_pts);
+//        videoState->video_decode_frame_pts = -1;
         return 0;
     }
 
     float deltaTime = consume_pts - videoState->video_prev_consume_pts;
     enum FFStrategyState strategy = STRATEGY_NONE;
 
-    if (deltaTime > videoState->seekThreshold) {// 解码慢了
+    if (deltaTime > videoState->seek_threshold) {// 解码慢了
         strategy = STRATEGY_SEEK_FORWARD;
-    } else if (deltaTime < -videoState->seekThreshold) {// 解码快了
+    } else if (deltaTime < -videoState->seek_threshold) {// 解码快了
         strategy = STRATEGY_SEEK_BACKWARD;
     } else {
-        if (fabs(deltaTime) < videoState->timeThreshold) {  // 半帧以内
+        if (fabs(deltaTime) < videoState->threshold) {  // 半帧以内
             strategy = STRATEGY_STOP;
-        } else if (deltaTime > videoState->timeThreshold) {  // 向前解码
+        } else if (deltaTime > videoState->threshold) {  // 向前解码
             strategy = STRATEGY_ACCELERATE_FORWARD;
-        } else if (deltaTime < -videoState->timeThreshold) {  // 向后解码
+        } else if (deltaTime < -videoState->threshold) {  // 向后解码
             strategy = STRATEGY_ACCELERATE_BACKWARD;
         }
     }
@@ -404,6 +370,7 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
     }
 
     if (!seek_flag && !decode_flag) {
+        ff_log("no need seek_flag decode_flag");
         return 0;
     }
     
@@ -415,8 +382,8 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
     if (seek_flag) {
 //        bool inSameGop = ff_is_same_gop(ioCodecCtx, consume_pts, videoState->video_prev_consume_pts);
 //        if (!inSameGop) {
-//            float keyPts = dependKeyFrame(ioCodecCtx, consume_pts);
-        ff_log("need seek from %f to %f\n", videoState->video_prev_consume_pts, videoState->video_consume_pts);
+        float keyPts = _ff_depend_keyframe(ioCodecCtx, consume_pts);
+        ff_log("hit seek from %f to %f gap %f", keyPts, consume_pts, consume_pts - keyPts);
         _ff_stream_seek(ioCodecCtx, consume_pts);
 //        }
     } else if (decode_flag) {
@@ -428,13 +395,16 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
     //读取packet和读取frame要分开两个函数, 因为packet和frame不是一一对应的关系, 当packet读取结束时, 还可以继续去读取缓存里的frame
     while (true) {
         if (stop_flag == true) {
+            ff_log("stop_flag");
             break;
         }
         if (find_flag || ioCodecCtx->decode_eof || ioCodecCtx->error_exit) {
+            ff_log("find_flag = %d, decode_eof = %d, error_exit = %d", find_flag, ioCodecCtx->decode_eof, ioCodecCtx->error_exit);
             break;
         }
-        if (ioCodecCtx->packet_eof == false && _ff_send_video_packet(ioCodecCtx) != FF_DECODE_OK) {
-            av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet fail\n");
+        ret = _ff_send_video_packet(ioCodecCtx);
+        if (ret != FF_DECODE_OK && ret != AVERROR_EOF && ret == AVERROR(EAGAIN)) {
+            av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet fail %s\n", av_err2str(ret));
             ioCodecCtx->error_exit = true;
             break;
         }
@@ -444,11 +414,10 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
             if (ret == FF_DECODE_OK) {
                 float ptsMs = ioCodecCtx->srcFrame->pts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
                 float dtsMs = ioCodecCtx->srcFrame->pkt_dts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
-                ff_log("%d 帧 pts: %f, dts: %f, consume: %f diff: %f, interval: %f\n", ioCodecCtx->srcFrame->pict_type, ptsMs, dtsMs, consume_pts, consume_pts - ptsMs, videoState->timeThreshold);
+                ff_log("decode %d 帧 consume_pts: %f frame pts: %f, diff: %f, interval: %f", ioCodecCtx->srcFrame->pict_type, consume_pts, ptsMs, consume_pts - ptsMs, videoState->threshold);
 
                 videoState->video_decode_frame_pts = ptsMs;
-                if (fabsf(ptsMs - consume_pts) < fabsf(videoState->timeThreshold)) {
-                    //    ff_writer_yuv(ioCodecCtx, consume_pts);
+                if (fabsf(ptsMs - consume_pts) < fabsf(videoState->threshold)) {
                     *outFrame = ioCodecCtx->swsFrame;
                     find_flag = true;
                     break;
@@ -466,14 +435,14 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
                 }
             } else {
                 if (AVERROR(EAGAIN) == ret) {
-                    av_log(NULL, AV_LOG_ERROR, "ERROR: decode frame AVERROR(EAGAIN) %f\n", consume_pts);
+                    av_log(NULL, AV_LOG_ERROR, "ERROR: decode frame AVERROR(EAGAIN) consume_pts %f\n", consume_pts);
                     break;
                 } else if (AVERROR_EOF == ret) {
-                    av_log(NULL, AV_LOG_ERROR, "ERROR: decode frame AVERROR_EOF %f\n", consume_pts);
+                    av_log(NULL, AV_LOG_ERROR, "ERROR: decode frame AVERROR_EOF consume_pts %f\n", consume_pts);
                     ioCodecCtx->decode_eof = true;
                     break;
                 } else {
-                    av_log(NULL, AV_LOG_ERROR, "ERROR: decode error %s\n", av_err2str(ret));
+                    av_log(NULL, AV_LOG_ERROR, "ERROR: decode error consume_pts %f msg: %s\n", consume_pts, av_err2str(ret));
                     ioCodecCtx->error_exit = true;
                     break;
                 }
@@ -483,13 +452,13 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
     
     if (find_flag) {
         float ptsMs = ioCodecCtx->srcFrame->pts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
-        ff_log("decode success consume pts %f, frame pts: %f, diff: %f\n", consume_pts, ptsMs, consume_pts - ptsMs);
+        ff_log("decode success consume pts %f, frame pts: %f, diff: %f", consume_pts, ptsMs, consume_pts - ptsMs);
         
     } else {
         if (ret == FF_DECODE_OK) {
-            ff_log("decode success, but no consume pts %f\n", consume_pts);
+            ff_log("decode success, but no consume pts %f", consume_pts);
         } else {
-            ff_log("not find consume pts %f\n", consume_pts);
+            ff_log("not find consume pts %f", consume_pts);
         }
     }
     videoState->video_prev_consume_pts = consume_pts;
@@ -499,7 +468,7 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
     long seconds = end.tv_sec - begin.tv_sec;
     long nanoseconds = end.tv_nsec - begin.tv_nsec;
     double elapsed = seconds + nanoseconds*1e-9;
-    ff_log("cost Time measured: %.3f ms.\n", elapsed * 1000);
+    ff_log("cost time measured: %.3f ms", elapsed * 1000);
     videoState->running = false;
 //    printf("running end\n");
 
@@ -562,7 +531,7 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
     ioBuffer->ori_ptr = heapData;
     ioBuffer->has_size = file_len;
     ioBuffer->file_size = file_len;
-    ff_log("file size %zu\n", file_len);
+    ff_log("file size %zu", file_len);
     // 打开输入文件
     ioCodecCtx->fmt_ctx = avformat_alloc_context();
     if (!ioCodecCtx->fmt_ctx) {
@@ -622,6 +591,9 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
 
 #endif
 
+    float durationMs = get_videostream_durationMs(videoState->ioCodecCtx);
+    ioCodecCtx->durationMs = durationMs;
+    
     ioCodecCtx->avpacket = av_packet_alloc();
     ioCodecCtx->srcFrame = av_frame_alloc();
 
@@ -641,10 +613,10 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
 
     ioCodecCtx->swsFrame->width = dstWidth;
     ioCodecCtx->swsFrame->height = dstHeight;
-    ioCodecCtx->swsContext = sws_getContext(srcWidth, srcHeight, srcPixFmt,
+    ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
                                             dstWidth, dstHeight, dstPixFmt,
                                             sws_flags, NULL, NULL, NULL);
-    ff_log("width = %d, height = %d\n", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
+    ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
     
     //开启多线程解码
     ioCodecCtx->avcodec_context->thread_count = 8;
@@ -657,19 +629,19 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
     float avg_frame_rate = av_q2d(ioCodecCtx->video_stream->avg_frame_rate);
 //    float r_frame_rate = av_q2d(ioCodecCtx->video_stream->r_frame_rate);
 
-    ioCodecCtx->frameRate = 1000 / avg_frame_rate;
+    ioCodecCtx->frame_rate = 1000 / avg_frame_rate;
 
-    videoState->timeThreshold = ceil(ioCodecCtx->frameRate / 2);
-    videoState->seekThreshold = 150;
+    videoState->threshold = ceil(ioCodecCtx->frame_rate / 2);
+    videoState->seek_threshold = 150;
     
     //解析关键帧
-//    ff_parser_keyframes(ioCodecCtx);
+    _ff_parser_keyframes(ioCodecCtx);
     
     if (this->videoState->initcb) {
         VideoInfo info = {
             ioCodecCtx->avcodec_context->width,
             ioCodecCtx->avcodec_context->height,
-            static_cast<int>(getDurationSEC(ioCodecCtx) * 1000),
+            static_cast<int>(ioCodecCtx->durationMs),
             avg_frame_rate
         };
         this->videoState->initcb(info);
@@ -718,17 +690,19 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
 //    auto getRet = getNum.get();
 //    std::cout << getRet << std::endl; // 4
 
+    videoState->event = DECODE_EVENT_INIT;
     return 0;
 }
 
 int ffdecode::ff_decode_frame(float consume_pts, AVFrame **outFrame) {
+    videoState->event = DECODE_EVENT_DECODE;
 //    if (videoState->running) {
 //        printf("running\n");
 //        return 0;
 //    }
     this->task_stop = false;
     this->consume_pts = consume_pts;
-    ff_log("this->consume_pts %f\n", consume_pts);
+//    ff_log("this->consume_pts %f", consume_pts);
     if (outFrame) {
         int ret = ff_decode_frame_unit(videoState, consume_pts, outFrame);
         if (this->videoState->decodecb) {
@@ -747,6 +721,12 @@ int ffdecode::ff_decode_frame(float consume_pts, AVFrame **outFrame) {
 }
 
 int ffdecode::ff_hold_seek(bool seek) {
+    if (seek) {
+        videoState->event = DECODE_EVENT_WILL_SEEK;
+    } else {
+        videoState->event = DECODE_EVENT_DID_SEEK;
+    }
+
     videoState->seek = seek;
     return 0;
 }
@@ -755,6 +735,7 @@ int ffdecode::ff_seek_frame(float ptsMs, AVFrame **outFrame) {
 //    if (videoState->running) {
 //        return 0;
 //    }
+    videoState->event = DECODE_EVENT_SEEK;
     //先把缓冲读完, 防止读到旧数据
     task_stop = true;
     videoState->ioCodecCtx->packet_eof = false;
@@ -791,8 +772,8 @@ int ffdecode::ff_decode_free(long handle) {
         av_frame_free(&ioCodecCtx->swsFrame);
     }
     
-    if (ioCodecCtx->swsContext) {
-        sws_freeContext(ioCodecCtx->swsContext);
+    if (ioCodecCtx->sws_context) {
+        sws_freeContext(ioCodecCtx->sws_context);
     }
 
     if (ioCodecCtx->avcodec_context) {
@@ -911,7 +892,7 @@ int ffdecode::av_io_decode_test(uint8_t *heapData, size_t file_len, const char *
 
     ioCodecCtx->swsFrame->width = dstWidth;
     ioCodecCtx->swsFrame->height = dstHeight;
-    ioCodecCtx->swsContext = sws_getContext(srcWidth, srcHeight, srcPixFmt,
+    ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
                                 dstWidth, dstHeight, dstPixFmt,
                                 SWS_FAST_BILINEAR, NULL, NULL, NULL);
 
@@ -976,7 +957,7 @@ int ffdecode::av_io_decode_test(uint8_t *heapData, size_t file_len, const char *
             } else if (ret >= 0) {
                 // 往编码器发送 AVFrame，然后不断读取 AVPacket
 
-                int height = sws_scale(ioCodecCtx->swsContext,
+                int height = sws_scale(ioCodecCtx->sws_context,
                                        (const uint8_t *const *)ioCodecCtx->srcFrame->data, ioCodecCtx->srcFrame->linesize,
                                        0, ioCodecCtx->srcFrame->height,
                                        ioCodecCtx->swsFrame->data,
@@ -987,7 +968,7 @@ int ffdecode::av_io_decode_test(uint8_t *heapData, size_t file_len, const char *
                 }
 
 #ifdef __APPLE__
-                enum AVPixelFormat pixelForamt = (AVPixelFormat)ioCodecCtx->srcFrame->format;
+//                enum AVPixelFormat pixelForamt = (AVPixelFormat)ioCodecCtx->srcFrame->format;
                 int y_size = ioCodecCtx->swsFrame->width * ioCodecCtx->swsFrame->height;
                 int u_size = y_size / 4;
                 int v_size = y_size / 4;
