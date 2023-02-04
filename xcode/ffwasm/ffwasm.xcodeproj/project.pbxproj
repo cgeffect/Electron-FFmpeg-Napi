@@ -20,6 +20,7 @@
 		968A3CBF298768AD004803C4 /* ffdecode.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 968A3CBB298768AD004803C4 /* ffdecode.cpp */; };
 		968A3CC7298AA9F8004803C4 /* ffthread.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 968A3CC6298AA9F8004803C4 /* ffthread.cpp */; };
 		968A3D09298C1626004803C4 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 968A3D08298C161F004803C4 /* libc++.tbd */; };
+		968A3D22298E306A004803C4 /* ffrotate.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 968A3D20298E306A004803C4 /* ffrotate.cpp */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -53,6 +54,8 @@
 		968A3CC5298AA9F8004803C4 /* ffthread.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ffthread.h; sourceTree = "<group>"; };
 		968A3CC6298AA9F8004803C4 /* ffthread.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ffthread.cpp; sourceTree = "<group>"; };
 		968A3D08298C161F004803C4 /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
+		968A3D20298E306A004803C4 /* ffrotate.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ffrotate.cpp; path = ../../../src/ffrotate.cpp; sourceTree = "<group>"; };
+		968A3D21298E306A004803C4 /* ffrotate.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ffrotate.h; path = ../../../src/ffrotate.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -97,6 +100,8 @@
 			isa = PBXGroup;
 			children = (
 				968A3CC02987CB21004803C4 /* ffplay.c */,
+				968A3D20298E306A004803C4 /* ffrotate.cpp */,
+				968A3D21298E306A004803C4 /* ffrotate.h */,
 				968A3CBB298768AD004803C4 /* ffdecode.cpp */,
 				968A3CB8298768AD004803C4 /* ffdecode.h */,
 				968A3C9929876437004803C4 /* main.cpp */,
@@ -181,6 +186,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				968A3D22298E306A004803C4 /* ffrotate.cpp in Sources */,
 				968A3CC7298AA9F8004803C4 /* ffthread.cpp in Sources */,
 				968A3CBF298768AD004803C4 /* ffdecode.cpp in Sources */,
 				968A3C9A29876437004803C4 /* main.cpp in Sources */,

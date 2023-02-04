@@ -81,6 +81,7 @@ typedef struct FFCodecContext {
     AVIOContext *avio_ctx;
     uint8_t *avio_buffer;
     AVCodecContext *avcodec_context;
+    int rotateWidth, rotateHeight;
     AVPacket *avpacket;
     AVFrame *srcFrame;
     int avio_ctx_buffer_size;
@@ -96,6 +97,11 @@ typedef struct FFCodecContext {
     float frame_rate;
     bool error_exit;
     float durationMs;
+    
+    //旋转
+    int rotate;
+    AVFrame *rotateFrame = nullptr;
+    SwsContext *swsContext = nullptr;
     
 } FFCodecContext;
 

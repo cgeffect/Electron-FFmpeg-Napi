@@ -11,4 +11,5 @@ a.out.wasm
 *.mp4
 package-lock.json
 *.wasm
-
+*.mov
+*.MOV

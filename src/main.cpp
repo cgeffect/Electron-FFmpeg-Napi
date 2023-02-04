@@ -67,6 +67,7 @@ void JS_VideoDecodeFunc(unsigned char *y,
                         long pts) {
 #ifdef __APPLE__
 //        enum AVPixelFormat pixelForamt = (AVPixelFormat)frame->format;
+    printf("width %d, height %d, line1 %d line2 %d", width, height, line1, line2);
      int y_size = width * height;
      int u_size = y_size / 4;
      int v_size = y_size / 4;
@@ -188,7 +189,7 @@ int main(int argc, const char * argv[]) {
     set_log_level(16);
     outFile = fopen("/Users/jason/Jason/mogic/ffwasm/res/1920_1080.yuv", "wb");
     size_t length = 0;
-    const char *path = "/Users/jason/Jason/mogic/ffwasm/res/test.mp4";
+    const char *path = "/Users/jason/Jason/mogic/ffwasm/res/IMG_1563_90.MOV";
     uint8_t *data = read_file_memory(path, &length);
 
 #ifdef TEST

@@ -10,8 +10,8 @@ export FUNCTIONS="['_ffwasm_decode_open','_ffwasm_decode_frame','_ffwasm_decode_
 #-fdebug-compilation-dir='.' c 代码路径, 相对于ffmpeg.js的目录
 #-g 
 #EMCC_DEBUG=1
-EMCC_AUTODEBUG=1 emcc -g -std=c++17 \
-    ./src/main.cpp ./src/ffdecode.cpp \
+emcc -g -std=c++17 \
+    ./src/main.cpp ./src/ffdecode.cpp ./src/ffrotate.cpp \
     -fdebug-compilation-dir='.' \
     ./third/libffmpeg/lib/libavcodec.a ./third/libffmpeg/lib/libavformat.a ./third/libffmpeg/lib/libavutil.a ./third/libffmpeg/lib/libswscale.a \
     -I "third/libffmpeg/include" \
@@ -43,6 +43,8 @@ cp -r ./dist/ ./web/ffmpegkit
 cp ./src/main.cpp ./web/ffmpegkit/src/main.cpp
 cp ./src/ffdecode.h ./web/ffmpegkit/src/ffdecode.h
 cp ./src/ffdecode.cpp ./web/ffmpegkit/src/ffdecode.cpp
+cp ./src/ffrotate.h ./web/ffmpegkit/src/ffrotate.h
+cp ./src/ffrotate.cpp ./web/ffmpegkit/src/ffrotate.cpp
 
 echo "copy ffwasm to video"
 rm -rf ./video/libffwasm
@@ -52,3 +54,5 @@ cp -r ./dist/ ./video/libffwasm
 cp ./src/main.cpp ./video/libffwasm/src/main.cpp
 cp ./src/ffdecode.h ./video/libffwasm/src/ffdecode.h
 cp ./src/ffdecode.cpp ./video/libffwasm/src/ffdecode.cpp
+cp ./src/ffrotate.h ./video/libffwasm/src/ffrotate.h
+cp ./src/ffrotate.cpp ./video/libffwasm/src/ffrotate.cpp

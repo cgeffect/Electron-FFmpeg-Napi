@@ -13,3 +13,10 @@ M1 选择 Rosetta 运行
 
 ffplay.c
 https://ffmpeg.xianwaizhiyin.net/ffplay/decoder_decode_frame.html
+
+
+Seek策略以及在有B帧情况下的处理
+https://glumes.com/video-seek-with-b-frame/
+
+Seek优化
+https://mp.weixin.qq.com/s/uBr0Um40ZztFsfGCWPxpZA

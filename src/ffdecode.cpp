@@ -22,6 +22,7 @@
 #include <thread>
 #include <future>
 #include <unistd.h>
+#include "ffrotate.h"
 
 #pragma mark - c/c++ interface
 void set_log_level(int level) {
@@ -72,6 +73,7 @@ static unsigned sws_flags = SWS_BICUBIC;
 namespace ffwasm
 {
 
+#pragma mark - callback
 /* 读取 AVPacket 回调函数 */
 static int read_packet_ptr(void *opaque, uint8_t *buf, int buf_size)
 {
@@ -123,13 +125,58 @@ static int64_t seek_in_buffer_ptr(void *opaque, int64_t offset, int whence)
     return ret;
 }
 
+#pragma mark - util
 FILE * outfile;
-float get_videostream_durationMs(FFCodecContext *ioCodecCtx) {
+
+/**
+ * @return AVERROR_INVALIDDATA if the packet is not a valid NAL unit,
+ * 0 otherwise
+ */
+//static int hevc_parse_nal_header(H2645NAL *nal, void *logctx)
+//{
+//    GetBitContext *gb = &nal->gb;
+//
+//    if (get_bits1(gb) != 0)
+//        return AVERROR_INVALIDDATA;
+//
+//    nal->type = get_bits(gb, 6);
+//
+//    nal->nuh_layer_id = get_bits(gb, 6);
+//    nal->temporal_id = get_bits(gb, 3) - 1;
+//    if (nal->temporal_id < 0)
+//        return AVERROR_INVALIDDATA;
+//
+//    av_log(logctx, AV_LOG_DEBUG,
+//           "nal_unit_type: %d(%s), nuh_layer_id: %d, temporal_id: %d\n",
+//           nal->type, hevc_nal_unit_name(nal->type), nal->nuh_layer_id, nal->temporal_id);
+//
+//    return 0;
+//}
+//
+
+//static int h264_parse_nal_header(H2645NAL *nal, void *logctx)
+//{
+//    GetBitContext *gb = &nal->gb;
+//
+//    if (get_bits1(gb) != 0)
+//        return AVERROR_INVALIDDATA;
+//
+//    nal->ref_idc = get_bits(gb, 2);
+//    nal->type    = get_bits(gb, 5);
+//
+//    av_log(logctx, AV_LOG_DEBUG,
+//           "nal_unit_type: %d(%s), nal_ref_idc: %d\n",
+//           nal->type, h264_nal_unit_name(nal->type), nal->ref_idc);
+//
+//    return 0;
+//}
+
+static float get_videostream_durationMs(FFCodecContext *ioCodecCtx) {
     AVStream *videoStream = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]; // 音频流、视频流、字幕流
     return videoStream->duration * av_q2d(videoStream->time_base) * 1000;
 }
 
-int _flush_decode_buffer(FFCodecContext *ioCodecCtx) {
+static int _flush_decode_buffer(FFCodecContext *ioCodecCtx) {
     avcodec_flush_buffers(ioCodecCtx->avcodec_context);
 
     while (true) {
@@ -146,7 +193,7 @@ AVSEEK_FLAG_BYTE 2 ///< seeking based on position in bytes 基于字节位置的
 AVSEEK_FLAG_ANY 4 ///< seek to any frame, even non-keyframes 跳转到任意帧，不一定是关键帧
 AVSEEK_FLAG_FRAME 8 ///< seeking based on frame number 基于帧数量的跳转
  */
-int _ff_stream_seek(FFCodecContext *ioCodecCtx, float seekMs) {
+static int _ff_stream_seek(FFCodecContext *ioCodecCtx, float seekMs) {
     AVFormatContext *avFormatContext = ioCodecCtx->fmt_ctx;
     if (seekMs >= ioCodecCtx->durationMs) {
         av_log(NULL, AV_LOG_ERROR, "seekToMs seek time error, seek time out of file\n");
@@ -170,7 +217,7 @@ int _ff_stream_seek(FFCodecContext *ioCodecCtx, float seekMs) {
     return 0;
 }
 
-int _ff_parser_keyframes(FFCodecContext *ioCodecCtx) {
+static int _ff_parser_keyframes(FFCodecContext *ioCodecCtx) {
     int keyframeCount = KEY_FRAME_COUNT;
     ioCodecCtx->keyFrameList = (float *)malloc(keyframeCount * sizeof(float));
     AVPacket packet;
@@ -209,7 +256,7 @@ int _ff_parser_keyframes(FFCodecContext *ioCodecCtx) {
 }
 
 // 找当前pts依赖的I帧
-float _ff_depend_keyframe(FFCodecContext *ioCodecCtx, float newPts) {
+static float _ff_depend_keyframe(FFCodecContext *ioCodecCtx, float newPts) {
     float newKey = -1;
     int maxIndex = (int) (ioCodecCtx->keyFrameCount - 1);
     for (int i = maxIndex; i >= 0; i--) {
@@ -222,13 +269,13 @@ float _ff_depend_keyframe(FFCodecContext *ioCodecCtx, float newPts) {
     return newKey;
 }
 
-bool _ff_is_same_gop(FFCodecContext *ioCodecCtx, float currentPts, float prevPts) {
+static bool _ff_is_same_gop(FFCodecContext *ioCodecCtx, float currentPts, float prevPts) {
     float currentKey = _ff_depend_keyframe(ioCodecCtx, currentPts);
     float prevKey = _ff_depend_keyframe(ioCodecCtx, prevPts);
     return currentPts >= prevPts && currentKey == prevKey;
 }
 
-int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
+static int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
     if (ioCodecCtx->packet_eof) {
         return AVERROR_EOF;
     }
@@ -242,9 +289,37 @@ int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
             float ptsMs = ioCodecCtx->avpacket->pts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
             float dtsMs = ioCodecCtx->avpacket->dts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
 
+
             bool isKeyFrame = ioCodecCtx->avpacket->flags & AV_PKT_FLAG_KEY;
             ff_log("read packet keyframe %d, ptsMs: %f, dtsMs %f", isKeyFrame, ptsMs, dtsMs);
+//            for (int i = 0; i < 20; i++) {
+//                printf("%02x ", ioCodecCtx->avpacket->data[i]);
+//            }
+//            float type = (ioCodecCtx->avpacket->data[4] & 0x1F);
 
+//            char nal_start[]={0,0,0,1};
+//            fwrite(nal_start,4,1,fp);
+//            fwrite(pkt->data+4,pkt->size-4,1,fp);
+//            fclose(fp);
+            
+             /*
+              //解析packet的nalu haeder
+              //https://blog.csdn.net/gavinr/article/details/7183499
+              //nal_ref_idc
+         //                for (int i = 0; i < 20; i++) {
+         //                    printf("%02x ", _packet.data[i]);
+         //                }
+         //                printf("\naaaaa = %d %d\n", ((_packet.data[4] & 0x60) >> 5), (_packet.data[4] & 0x1F));
+         //                if (((_packet.data[4] & 0x60) >> 5) == 0x0 && (_packet.data[4] & 0x1F) == 0x1) {
+         //                    isStopDemuxer = NO;
+         //                    printf("aaaaa stop\n");
+         //                    demuxerEngine_destroyPacket(_nativeHandle);
+         //                }
+         //                nal_ref_idc
+              
+              //https://mp.weixin.qq.com/s/uBr0Um40ZztFsfGCWPxpZA
+
+              */
             avcodec_send_packet(ioCodecCtx->avcodec_context, ioCodecCtx->avpacket);
             av_packet_unref(ioCodecCtx->avpacket);
 
@@ -267,8 +342,20 @@ int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
     }
     return FF_DECODE_OK;
 }
+int _ff_yuv_rotate(int srcRotate, AVFrame *srcFrame, AVFrame *rotateFrame) {
+    if (fabs(srcRotate - 90) < 1.0) {
+        ffrotate::frameRotate90(srcFrame, rotateFrame);
+    } else if (fabs(srcRotate - 180) < 1.0 || fabs(srcRotate + 180) < 1.0) {
+        ffrotate::frameRotate180(srcFrame, rotateFrame);
+    } else if (fabs(srcRotate - 270) < 1.0 || fabs(srcRotate + 90) < 1.0) {
+        ffrotate::frameRotate270(srcFrame, rotateFrame);
+    } else {
+        // 0 degreee do nothing
+    }
+    return 0;
+}
 
-int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
+static int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
     int ret = FF_DECODE_OK;
     // 读取 AVFrame
     ret = avcodec_receive_frame(ioCodecCtx->avcodec_context, frame);
@@ -278,15 +365,32 @@ int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
      * */
     // av_frame_unref(frame);
     if (ret == 0) {
-        int height = sws_scale(ioCodecCtx->sws_context,
-                               (const uint8_t *const *)ioCodecCtx->srcFrame->data, ioCodecCtx->srcFrame->linesize,
-                               0, ioCodecCtx->srcFrame->height,
-                               ioCodecCtx->swsFrame->data,
-                               ioCodecCtx->swsFrame->linesize);
-        if (height <= 0) {
-            av_log(NULL, AV_LOG_ERROR, "decoderPacket sws_scale error, height is %d\n", height);
-            return height;
+        //
+        if (ioCodecCtx->avcodec_context->width != frame->linesize[0]) {
+            int height = sws_scale(ioCodecCtx->sws_context,
+                                   (const uint8_t *const *)ioCodecCtx->srcFrame->data, ioCodecCtx->srcFrame->linesize,
+                                   0, ioCodecCtx->srcFrame->height,
+                                   ioCodecCtx->swsFrame->data,
+                                   ioCodecCtx->swsFrame->linesize);
+            if (height <= 0) {
+                av_log(NULL, AV_LOG_ERROR, "decoderPacket sws_scale error, height is %d\n", height);
+                return height;
+            }
+            if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
+                _ff_yuv_rotate(ioCodecCtx->rotate, ioCodecCtx->swsFrame, ioCodecCtx->rotateFrame);
+                ioCodecCtx->swsFrame = ioCodecCtx->rotateFrame;
+            }
+        } else {
+            if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
+                _ff_yuv_rotate(ioCodecCtx->rotate, frame, ioCodecCtx->rotateFrame);
+                ioCodecCtx->swsFrame = ioCodecCtx->rotateFrame;
+            } else {
+                ioCodecCtx->swsFrame = frame;
+            }
         }
+
+        //统一处理, 转成rgba
+        
         return ret;
     } else {
         return ret;
@@ -304,9 +408,9 @@ int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
 //    }
     return 0;
 }
-bool task_stop;
+
 #pragma mark - decode thread
-int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **outFrame) {
+static int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **outFrame) {
     if (videoState == NULL || consume_pts < 0 || outFrame == NULL || consume_pts > videoState->ioCodecCtx->durationMs) {
         av_log(NULL, AV_LOG_ERROR, "decode param error\n");
         return -1;
@@ -414,7 +518,7 @@ int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **
             if (ret == FF_DECODE_OK) {
                 float ptsMs = ioCodecCtx->srcFrame->pts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
                 float dtsMs = ioCodecCtx->srcFrame->pkt_dts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
-                ff_log("decode %d 帧 consume_pts: %f frame pts: %f, diff: %f, interval: %f", ioCodecCtx->srcFrame->pict_type, consume_pts, ptsMs, consume_pts - ptsMs, videoState->threshold);
+                ff_log("decode %c 帧 consume_pts: %f frame pts: %f, diff: %f, interval: %f", av_get_picture_type_char(ioCodecCtx->srcFrame->pict_type), consume_pts, ptsMs, consume_pts - ptsMs, videoState->threshold);
 
                 videoState->video_decode_frame_pts = ptsMs;
                 if (fabsf(ptsMs - consume_pts) < fabsf(videoState->threshold)) {
@@ -493,9 +597,6 @@ static void *decode_event_thread(void *ctx) {
 
     return NULL;
 }
-int decode_event(float pts) {
-    return 0;
-}
 
 #pragma mark - interface
 
@@ -524,7 +625,7 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
         videoState->pixelFormat = AV_PIX_FMT_RGBA;
     }
 
-    av_log_set_level(AV_LOG_ERROR);
+    av_log_set_level(AV_LOG_DEBUG);
     ioCodecCtx->avio_ctx_buffer_size = AVIO_BUFFER_SIZE;
 
     ioBuffer->ptr = heapData;
@@ -597,35 +698,82 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
     ioCodecCtx->avpacket = av_packet_alloc();
     ioCodecCtx->srcFrame = av_frame_alloc();
 
-    enum AVPixelFormat srcPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
-    enum AVPixelFormat dstPixFmt = videoState->pixelFormat;
-    int dstWidth = ioCodecCtx->avcodec_context->width;
-    int dstHeight = ioCodecCtx->avcodec_context->height;
-    ioCodecCtx->swsFrame = av_frame_alloc();
-    ioCodecCtx->swsFrame->format = dstPixFmt;
-    ret = av_image_alloc(ioCodecCtx->swsFrame->data, ioCodecCtx->swsFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
-    
-    int srcWidth = dstWidth;
-    int srcHeight = dstHeight;
-    // 输出frame的参数
-    // int outWidth1 = inWidth >> 4 << 4;
-    // int outHeight1 = inHeight >> 4 << 4;
+    {
+        //yuv420p -> yuv420p/rgba
+        enum AVPixelFormat srcPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
+        enum AVPixelFormat dstPixFmt = videoState->pixelFormat;
+        int dstWidth = ioCodecCtx->avcodec_context->width;
+        int dstHeight = ioCodecCtx->avcodec_context->height;
+        int srcWidth = dstWidth;
+        int srcHeight = dstHeight;
 
-    ioCodecCtx->swsFrame->width = dstWidth;
-    ioCodecCtx->swsFrame->height = dstHeight;
-    ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
-                                            dstWidth, dstHeight, dstPixFmt,
-                                            sws_flags, NULL, NULL, NULL);
-    ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
-    
+        ioCodecCtx->swsFrame = av_frame_alloc();
+        ioCodecCtx->swsFrame->format = dstPixFmt;
+        ret = av_image_alloc(ioCodecCtx->swsFrame->data, ioCodecCtx->swsFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
+        
+        ioCodecCtx->swsFrame->width = dstWidth;
+        ioCodecCtx->swsFrame->height = dstHeight;
+        ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
+                                                dstWidth, dstHeight, dstPixFmt,
+                                                sws_flags, NULL, NULL, NULL);
+        ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
+    }
+        
     //开启多线程解码
     ioCodecCtx->avcodec_context->thread_count = 8;
     //丢弃哪些帧不解码
-    ioCodecCtx->avcodec_context->skip_frame = AVDISCARD_DEFAULT;
+    ioCodecCtx->avcodec_context->skip_frame = AVDISCARD_NONREF;
+//    ioCodecCtx->avcodec_context->skip_loop_filter = AVDISCARD_DEFAULT;
+//    ioCodecCtx->avcodec_context->skip_idct = AVDISCARD_DEFAULT;
+
     //丢弃哪些帧不解码
     AVStream *video_stream = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index];
-    video_stream->discard = AVDISCARD_DEFAULT;
     ioCodecCtx->video_stream = video_stream;
+    video_stream->discard = AVDISCARD_NONREF;
+    int srcRotate = ffrotate::getRotateAngle(video_stream);
+//    srcRotate = 90;
+    ff_log("rotate: %d", srcRotate);
+    ioCodecCtx->rotate = srcRotate;
+    // 0 水平 不需要转
+    // 90 270 交换宽高，转成竖的
+    // 180 水平反向，宽高不用交换，但需要转正
+
+    if (srcRotate == 90 || srcRotate == 270 || srcRotate == 180) {
+        if (fabs(srcRotate - 90) < 1.0) {
+            int temp = ioCodecCtx->avcodec_context->width;
+            ioCodecCtx->rotateWidth = ioCodecCtx->avcodec_context->height;
+            ioCodecCtx->rotateHeight = temp;
+        } else if (fabs(srcRotate - 180) < 1.0 || fabs(srcRotate + 180) < 1.0) {
+            ioCodecCtx->rotateWidth = ioCodecCtx->avcodec_context->width;
+            ioCodecCtx->rotateHeight = ioCodecCtx->avcodec_context->height;
+        } else if (fabs(srcRotate - 270) < 1.0 || fabs(srcRotate + 90) < 1.0) {
+            int temp = ioCodecCtx->avcodec_context->width;
+            ioCodecCtx->rotateWidth = ioCodecCtx->avcodec_context->height;
+            ioCodecCtx->rotateHeight = temp;
+        } else {
+            // 0 degreee do nothing
+        }
+
+        //yuv420p -> rotate yuv420p
+        enum AVPixelFormat srcPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
+        enum AVPixelFormat dstPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
+        int srcWidth = ioCodecCtx->avcodec_context->width;
+        int srcHeight = ioCodecCtx->avcodec_context->height;
+        int dstWidth = ioCodecCtx->rotateWidth;
+        int dstHeight = ioCodecCtx->rotateHeight;
+
+        ioCodecCtx->rotateFrame = av_frame_alloc();
+        ioCodecCtx->rotateFrame->format = dstPixFmt;
+        ret = av_image_alloc(ioCodecCtx->rotateFrame->data, ioCodecCtx->rotateFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
+
+        ioCodecCtx->rotateFrame->width = dstWidth;
+        ioCodecCtx->rotateFrame->height = dstHeight;
+        ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
+                                                dstWidth, dstHeight, dstPixFmt,
+                                                sws_flags, NULL, NULL, NULL);
+        ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
+    }
+    
     float avg_frame_rate = av_q2d(ioCodecCtx->video_stream->avg_frame_rate);
 //    float r_frame_rate = av_q2d(ioCodecCtx->video_stream->r_frame_rate);
 
@@ -776,6 +924,13 @@ int ffdecode::ff_decode_free(long handle) {
         sws_freeContext(ioCodecCtx->sws_context);
     }
 
+    if (ioCodecCtx->rotateFrame) {
+        av_frame_free(&ioCodecCtx->rotateFrame);
+    }
+    if (ioCodecCtx->swsContext) {
+        sws_freeContext(ioCodecCtx->swsContext);
+    }
+    
     if (ioCodecCtx->avcodec_context) {
         avcodec_close(ioCodecCtx->avcodec_context);
         avcodec_free_context(&ioCodecCtx->avcodec_context);
