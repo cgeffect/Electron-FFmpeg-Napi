@@ -30,7 +30,7 @@ function renderStatus(text: string, type: 'normal' | 'loading' | 'error' = 'norm
 ;(async () => {
   try {
     const player = new FFWasmPlayer()
-    const defaultSource = './assets/11.mp4'
+    const defaultSource = '/11.mp4'
     renderStatus('正在加载默认素材...', 'loading')
     await player.init(defaultSource)
     renderVideoMeta(defaultSource, player.getVideoInfo())

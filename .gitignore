@@ -1,12 +1,8 @@
 *.dSYM
 build
+dist
 node_modules
-res
-*.mp4
 package-lock.json
-*.mov
-*.MOV
 .vscode
 .DS_Store
-/xcuserdata/
-/xcshareddata/
+/res/wasm/

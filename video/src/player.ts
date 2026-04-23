@@ -1,4 +1,3 @@
-import FfmpegKit from '../libffwasm/libffmpeg.js'
 import { DrawYuv } from './helper.js'
 import type { DecodeYUVCallback, IFFModule, IVideoInfo, IYUVObject } from './types'
 
@@ -35,7 +34,9 @@ export class FFWasmPlayer {
   }
 
   async init(defaultSource = './assets/11.mp4') {
-    this.module = await FfmpegKit({ locateFile: () => '../libffwasm/libffmpeg.wasm' }) as IFFModule
+    const ffmpegModule = await import('/wasm/libffmpeg.js')
+    const ffmpegInit = ffmpegModule.default as (options: { locateFile: () => string }) => Promise<IFFModule>
+    this.module = await ffmpegInit({ locateFile: () => '/wasm/libffmpeg.wasm' })
     this.bindCallbacks()
     this.bindEvents()
     await this.loadFromUrl(defaultSource)
