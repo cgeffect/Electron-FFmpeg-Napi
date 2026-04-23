@@ -4,7 +4,7 @@
  */
 #include "ffdecode.h"
 #ifdef __cplusplus
-extern "C" {
+ extern "C" {
 #endif
 #include <libavcodec/avcodec.h>
 #include <libavutil/avutil.h>
@@ -15,7 +15,6 @@ extern "C" {
 #include <libavutil/log.h>
 #include <pthread.h>
 #include <libavformat/avio.h>
-#include <libyuv.h>
 #ifdef __cplusplus
 }
 #endif
@@ -29,21 +28,15 @@ extern "C" {
 void set_log_level(int level) {
     av_log_set_level(level);
 }
-long ffcpp_decode_init(uint8_t *heapData, size_t file_len, FF_PIX_FMT pix_fmt, InitCallback initcb, DecodeCallback cb) {
+long ffcpp_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, const char *outputFile, InitCallback initcb, DecodeCallback cb) {
     ffwasm::ffdecode *decode = new ffwasm::ffdecode();
-    decode->ff_decode_init(heapData, file_len, pix_fmt, initcb, cb);
+    decode->ff_decode_init(heapData, file_len, pix_fmt, outputFile, initcb, cb);
     return (long)decode;
 }
 
-int ffcpp_set_param(long handle, int rotate) {
-    ffwasm::ffdecode *decode = new ffwasm::ffdecode();
-    decode->ff_set_param(rotate);
-    return 0;
-}
-
-int ffcpp_decode_frame(long handle, float pts) {
+int ffcpp_decode_frame(long handle, float pts, AVFrame **outFrame) {
     ffwasm::ffdecode *decode = (ffwasm::ffdecode *)handle;
-    return decode->ff_decode_frame(pts);
+    return decode->ff_decode_frame(pts, outFrame);
 }
 
 int ffcpp_hold_seek(long handle, bool seek) {
@@ -51,9 +44,9 @@ int ffcpp_hold_seek(long handle, bool seek) {
     return decode->ff_hold_seek(seek);
 }
 
-int ffcpp_seek_frame(long handle, float ptsMs) {
+int ffcpp_seek_frame(long handle, float ptsMs, AVFrame **outFrame) {
     ffwasm::ffdecode *decode = (ffwasm::ffdecode *)handle;
-    return decode->ff_seek_frame(ptsMs);
+    return decode->ff_seek_frame(ptsMs, outFrame);
 }
 
 int ffcpp_decode_free(long handle) {
@@ -92,8 +85,13 @@ static int read_packet_ptr(void *opaque, uint8_t *buf, int buf_size)
         return EAGAIN;
     }
     if (buf_size <= 0) {
-        av_log(NULL, AV_LOG_ERROR, "1no buf_size pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
-        return EAGAIN;
+        // Buffer drained: tell demuxer input reached EOF instead of transient EAGAIN.
+        // Returning EAGAIN here can trigger repeated retries and noisy logs in wasm.
+        if (bd->has_size == 0) {
+            return AVERROR_EOF;
+        }
+        av_log(NULL, AV_LOG_ERROR, "invalid buf_size in read_packet has_size %d,%zu\n", buf_size, bd->has_size);
+        return AVERROR(EINVAL);
     }
 //    float a = SIZE_MAX;
 //    printf("ptr in file:%p io.buffer ptr:%p, has_size:%zu,buf_size:%d\n", bd->ptr, buf, bd->has_size, buf_size);
@@ -129,6 +127,49 @@ static int64_t seek_in_buffer_ptr(void *opaque, int64_t offset, int whence)
 
 #pragma mark - util
 FILE * outfile;
+
+/**
+ * @return AVERROR_INVALIDDATA if the packet is not a valid NAL unit,
+ * 0 otherwise
+ */
+//static int hevc_parse_nal_header(H2645NAL *nal, void *logctx)
+//{
+//    GetBitContext *gb = &nal->gb;
+//
+//    if (get_bits1(gb) != 0)
+//        return AVERROR_INVALIDDATA;
+//
+//    nal->type = get_bits(gb, 6);
+//
+//    nal->nuh_layer_id = get_bits(gb, 6);
+//    nal->temporal_id = get_bits(gb, 3) - 1;
+//    if (nal->temporal_id < 0)
+//        return AVERROR_INVALIDDATA;
+//
+//    av_log(logctx, AV_LOG_DEBUG,
+//           "nal_unit_type: %d(%s), nuh_layer_id: %d, temporal_id: %d\n",
+//           nal->type, hevc_nal_unit_name(nal->type), nal->nuh_layer_id, nal->temporal_id);
+//
+//    return 0;
+//}
+//
+
+//static int h264_parse_nal_header(H2645NAL *nal, void *logctx)
+//{
+//    GetBitContext *gb = &nal->gb;
+//
+//    if (get_bits1(gb) != 0)
+//        return AVERROR_INVALIDDATA;
+//
+//    nal->ref_idc = get_bits(gb, 2);
+//    nal->type    = get_bits(gb, 5);
+//
+//    av_log(logctx, AV_LOG_DEBUG,
+//           "nal_unit_type: %d(%s), nal_ref_idc: %d\n",
+//           nal->type, h264_nal_unit_name(nal->type), nal->ref_idc);
+//
+//    return 0;
+//}
 
 static float get_videostream_durationMs(FFCodecContext *ioCodecCtx) {
     AVStream *videoStream = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]; // 音频流、视频流、字幕流
@@ -196,6 +237,7 @@ static int _ff_parser_keyframes(FFCodecContext *ioCodecCtx) {
             if (isKeyFrame) {
                 ff_log("key frame %d, index: %lld, ptsMs: %f", frameIndex, pts, ptsMs);
                 ioCodecCtx->keyFrameList[index] = ptsMs;
+                ff_log("key frame1 %f, count = %d",ioCodecCtx->keyFrameList[index], index);
                 index++;
                 if (index > keyframeCount) {
                     av_log(NULL, AV_LOG_DEBUG, "decode error: keyframeCount > %d", index);
@@ -209,7 +251,6 @@ static int _ff_parser_keyframes(FFCodecContext *ioCodecCtx) {
         }
     }
     ioCodecCtx->keyFrameCount = index;
-    ff_log("keyframe count = %d, totalframe count = %d, duration = %f\n", index, frameIndex, ioCodecCtx->durationMs);
     _ff_stream_seek(ioCodecCtx, 0);
     return 0;
 }
@@ -234,6 +275,73 @@ static bool _ff_is_same_gop(FFCodecContext *ioCodecCtx, float currentPts, float 
     return currentPts >= prevPts && currentKey == prevKey;
 }
 
+static int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
+    if (ioCodecCtx->packet_eof) {
+        return AVERROR_EOF;
+    }
+    while (true) {
+        int ret = av_read_frame(ioCodecCtx->fmt_ctx, ioCodecCtx->avpacket);
+        if (ret == FF_DECODE_OK) {
+            if (ioCodecCtx->video_stream_index != ioCodecCtx->avpacket->stream_index) {
+                av_packet_unref(ioCodecCtx->avpacket);
+                continue;
+            }
+            float ptsMs = ioCodecCtx->avpacket->pts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
+            float dtsMs = ioCodecCtx->avpacket->dts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
+
+
+            bool isKeyFrame = ioCodecCtx->avpacket->flags & AV_PKT_FLAG_KEY;
+            ff_log("read packet keyframe %d, ptsMs: %f, dtsMs %f", isKeyFrame, ptsMs, dtsMs);
+//            for (int i = 0; i < 20; i++) {
+//                printf("%02x ", ioCodecCtx->avpacket->data[i]);
+//            }
+//            float type = (ioCodecCtx->avpacket->data[4] & 0x1F);
+
+//            char nal_start[]={0,0,0,1};
+//            fwrite(nal_start,4,1,fp);
+//            fwrite(pkt->data+4,pkt->size-4,1,fp);
+//            fclose(fp);
+            
+             /*
+              //解析packet的nalu haeder
+              //https://blog.csdn.net/gavinr/article/details/7183499
+              //nal_ref_idc
+         //                for (int i = 0; i < 20; i++) {
+         //                    printf("%02x ", _packet.data[i]);
+         //                }
+         //                printf("\naaaaa = %d %d\n", ((_packet.data[4] & 0x60) >> 5), (_packet.data[4] & 0x1F));
+         //                if (((_packet.data[4] & 0x60) >> 5) == 0x0 && (_packet.data[4] & 0x1F) == 0x1) {
+         //                    isStopDemuxer = NO;
+         //                    printf("aaaaa stop\n");
+         //                    demuxerEngine_destroyPacket(_nativeHandle);
+         //                }
+         //                nal_ref_idc
+              
+              //https://mp.weixin.qq.com/s/uBr0Um40ZztFsfGCWPxpZA
+
+              */
+            avcodec_send_packet(ioCodecCtx->avcodec_context, ioCodecCtx->avpacket);
+            av_packet_unref(ioCodecCtx->avpacket);
+
+            return ret;
+        } else {
+            if (ret == AVERROR_EOF) {
+                // 读取完文件，这时候 pkt 的 data 跟 size 应该是 null
+                avcodec_send_packet(ioCodecCtx->avcodec_context, NULL);
+                ioCodecCtx->packet_eof = true;
+                return ret;
+            } else if (ret == AVERROR(EAGAIN)) {
+//                continue; //这里需要缓存, 尝试再次发送
+                av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet ret %d, %s\n", ret, av_err2str(ret));
+                return ret; //验证下是否需要特殊处理???
+            } else {
+                av_log(NULL, AV_LOG_ERROR, "ERROR: read error code %d, %s \n", ret, av_err2str(ret));
+                return ret;
+            }
+        }
+    }
+    return FF_DECODE_OK;
+}
 int _ff_yuv_rotate(int srcRotate, AVFrame *srcFrame, AVFrame *rotateFrame) {
     if (fabs(srcRotate - 90) < 1.0) {
         ffrotate::frameRotate90(srcFrame, rotateFrame);
@@ -247,404 +355,62 @@ int _ff_yuv_rotate(int srcRotate, AVFrame *srcFrame, AVFrame *rotateFrame) {
     return 0;
 }
 
-#pragma mark - decode thread
-
-void decode_event_thread(void *ctx) {
-
-    while (true) {
-        ffdecode *videoState = (ffdecode *)ctx;
-//        FFVideoState *videoState = ctx->vid
-    }
-}
-
-#pragma mark - interface
-
-ffdecode::ffdecode() {
-    
-}
-
-int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, FF_PIX_FMT pix_fmt, InitCallback initcb, DecodeCallback cb) {
-    if (heapData == nullptr || file_len <= 0) {
-        av_log(NULL, AV_LOG_ERROR, "data or file length is zero\n");
-        return -1;
-    }
-    
-    int ret = 0;
-
-    FFCodecContext *ioCodecCtx = (FFCodecContext *)av_mallocz(sizeof(FFCodecContext));
-    if (ioCodecCtx == nullptr) {
-        av_log(NULL, AV_LOG_ERROR, "malloc FFCodecContext fail\n");
-        return -1;
-    }
-    this->videoState = (FFVideoState *)av_mallocz(sizeof(FFVideoState));
-    ioBuffer = (FFBufferData *)av_mallocz(sizeof(FFBufferData));
-    videoState->ioCodecCtx = ioCodecCtx;
-    videoState->decodecb = cb;
-    videoState->initcb = initcb;
-    videoState->video_consume_pts = -1;       // 消费的pts
-    videoState->video_prev_consume_pts = -1;  // 实际解码的pts
-    videoState->video_decode_frame_pts = -1;  // 实际解码的pts
-
-    
-    if (pix_fmt == FF_PIX_FMT_I420) {
-        videoState->pixelFormat = AV_PIX_FMT_YUV420P;
-    } else if (pix_fmt == FF_PIX_FMT_RGBA) {
-        videoState->pixelFormat = AV_PIX_FMT_RGBA;
-    } else {
-        av_log(NULL, AV_LOG_ERROR, "no surrort pixel format %d\n", pix_fmt);
-        return -1;
-    }
-
-    av_log_set_level(AV_LOG_DEBUG);
-    ioCodecCtx->avio_ctx_buffer_size = AVIO_BUFFER_SIZE;
-
-    ioBuffer->ptr = heapData;
-    ioBuffer->ori_ptr = heapData;
-    ioBuffer->has_size = file_len;
-    ioBuffer->file_size = file_len;
-    ff_log("file size %zu", file_len);
-    // 打开输入文件
-    ioCodecCtx->fmt_ctx = avformat_alloc_context();
-    if (!ioCodecCtx->fmt_ctx) {
-        av_log(NULL, AV_LOG_ERROR, "error code %d \n", AVERROR(ENOMEM));
-        return ENOMEM;
-    }
-
-    ioCodecCtx->avio_buffer = (uint8_t *)av_malloc(ioCodecCtx->avio_ctx_buffer_size);
-    if (ioCodecCtx->avio_buffer == NULL) {
-        av_log(NULL, AV_LOG_ERROR, "avio_ctx_buffer is NULL\n");
-        return -1;
-    }
-
-    if (!ioCodecCtx->avio_buffer) {
-        av_log(NULL, AV_LOG_ERROR, "error code %d \n", AVERROR(ENOMEM));
-        return ENOMEM;
-    }
-    ioCodecCtx->avio_ctx = avio_alloc_context(ioCodecCtx->avio_buffer, ioCodecCtx->avio_ctx_buffer_size, 0, ioBuffer, &read_packet_ptr, NULL, &seek_in_buffer_ptr);
-    if (!ioCodecCtx->avio_ctx) {
-        av_log(NULL, AV_LOG_ERROR, "error code %d \n", AVERROR(ENOMEM));
-        return ENOMEM;
-    }
-    ioCodecCtx->fmt_ctx->pb = ioCodecCtx->avio_ctx;
-    if ((ret = avformat_open_input(&ioCodecCtx->fmt_ctx, NULL, NULL, NULL)) < 0) {
-        av_log(NULL, AV_LOG_ERROR, "can not open file %d %s \n", ret, av_err2str(ret));
-        return ret;
-    }
-
-    ret = avformat_find_stream_info(ioCodecCtx->fmt_ctx, NULL);
-    if (ret < 0) {
-        av_log(NULL, AV_LOG_ERROR, "avformat_find_stream_info file %d \n", ret);
-        return ret;
-    }
-
-    ioCodecCtx->avcodec_context = avcodec_alloc_context3(NULL);
-    ioCodecCtx->video_stream_index = av_find_best_stream(ioCodecCtx->fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
-    ret = avcodec_parameters_to_context(ioCodecCtx->avcodec_context, ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->codecpar);
-    if (ret < 0) {
-        av_log(NULL, AV_LOG_ERROR, "error code %d \n", ret);
-        return ret;
-    }
-    const AVCodec *codec = avcodec_find_decoder(ioCodecCtx->avcodec_context->codec_id);
-    if ((ret = avcodec_open2(ioCodecCtx->avcodec_context, codec, NULL)) < 0) {
-        av_log(NULL, AV_LOG_ERROR, "open codec faile %d \n", ret);
-        return ret;
-    }
-
-    float durationMs = get_videostream_durationMs(videoState->ioCodecCtx);
-    ioCodecCtx->durationMs = durationMs;
-    
-    ioCodecCtx->avpacket = av_packet_alloc();
-    ioCodecCtx->srcFrame = av_frame_alloc();
-//    bufferList.push_back(av_frame_alloc());
-//    bufferList.push_back(av_frame_alloc());
-    
-    {
-        //yuv420p -> yuv420p 裁剪
-        enum AVPixelFormat srcPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
-        enum AVPixelFormat dstPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
-        int srcWidth = ioCodecCtx->avcodec_context->width;
-        int srcHeight = ioCodecCtx->avcodec_context->height;
-        int dstWidth = ioCodecCtx->avcodec_context->width;
-        int dstHeight = ioCodecCtx->avcodec_context->height;
-
-        //裁剪
-        ioCodecCtx->swsFrame = av_frame_alloc();
-        ioCodecCtx->swsFrame->format = dstPixFmt;
-        ioCodecCtx->swsFrame->width = dstWidth;
-        ioCodecCtx->swsFrame->height = dstHeight;
-        
-        int memsize = av_image_alloc(ioCodecCtx->swsFrame->data, ioCodecCtx->swsFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
-        if (memsize <= 0) {
-            av_log(NULL, AV_LOG_ERROR, "sws convert fail %d\n", memsize);
-            return -1;
-        }
-        ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
-                                                dstWidth, dstHeight, dstPixFmt,
-                                                sws_flags, NULL, NULL, NULL);
-        ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
-        
-        //旋转
-        ioCodecCtx->rotateFrame = av_frame_alloc();
-        ioCodecCtx->rotateFrame->format = ioCodecCtx->avcodec_context->pix_fmt;
-        ioCodecCtx->rotateFrame->width = dstWidth;
-        ioCodecCtx->rotateFrame->height = dstHeight;
-        memsize = av_image_alloc(ioCodecCtx->rotateFrame->data, ioCodecCtx->rotateFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
-        if (memsize <= 0) {
-            av_log(NULL, AV_LOG_ERROR, "sws convert fail %d\n", memsize);
-            return -1;
-        }
-    }
-        
-    //开启多线程解码
-    ioCodecCtx->avcodec_context->thread_count = 8;
-    //丢弃哪些帧不解码
-//    ioCodecCtx->avcodec_context->skip_frame = AVDISCARD_DEFAULT;
-//    ioCodecCtx->avcodec_context->skip_loop_filter = AVDISCARD_DEFAULT;
-//    ioCodecCtx->avcodec_context->skip_idct = AVDISCARD_DEFAULT;
-
-    //丢弃哪些帧不解码
-    AVStream *video_stream = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index];
-    ioCodecCtx->video_stream = video_stream;
-//    video_stream->discard = AVDISCARD_NONREF;
-    int srcRotate = enable_rotate ? ffrotate::getRotateAngle(video_stream) : 0;
-    ff_log("enable_rotate %d, rotate: %d", enable_rotate, srcRotate);
-    ioCodecCtx->rotate = srcRotate;
-    // 0 水平 不需要转
-    // 90 270 交换宽高，转成竖的
-    // 180 水平反向，宽高不用交换，但需要转正
-    if (srcRotate == 90 || srcRotate == 270 || srcRotate == 180) {
-        if (fabs(srcRotate - 90) < 1.0) {
-            int temp = ioCodecCtx->avcodec_context->width;
-            ioCodecCtx->dstWidth = ioCodecCtx->avcodec_context->height;
-            ioCodecCtx->dstHeight = temp;
-        } else if (fabs(srcRotate - 180) < 1.0 || fabs(srcRotate + 180) < 1.0) {
-            ioCodecCtx->dstWidth = ioCodecCtx->avcodec_context->width;
-            ioCodecCtx->dstHeight = ioCodecCtx->avcodec_context->height;
-        } else if (fabs(srcRotate - 270) < 1.0 || fabs(srcRotate + 90) < 1.0) {
-            int temp = ioCodecCtx->avcodec_context->width;
-            ioCodecCtx->dstWidth = ioCodecCtx->avcodec_context->height;
-            ioCodecCtx->dstHeight = temp;
-        } else {
-            // 0 degreee do nothing
-        }
-    } else {
-        ioCodecCtx->dstWidth = ioCodecCtx->avcodec_context->width;
-        ioCodecCtx->dstHeight = ioCodecCtx->avcodec_context->height;
-    }
-        
-    {
-        //yuv420p -> rgba
-        enum AVPixelFormat srcPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
-        enum AVPixelFormat dstPixFmt = videoState->pixelFormat;
-        int srcWidth = ioCodecCtx->dstWidth;
-        int srcHeight = ioCodecCtx->dstHeight;
-        int dstWidth = ioCodecCtx->dstWidth;
-        int dstHeight = ioCodecCtx->dstHeight;
-
-        ioCodecCtx->rgbaFrame = av_frame_alloc();
-        ioCodecCtx->rgbaFrame->format = dstPixFmt;
-        float memsize = av_image_alloc(ioCodecCtx->rgbaFrame->data, ioCodecCtx->rgbaFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
-        if (memsize <= 0) {
-            av_log(NULL, AV_LOG_ERROR, "sws convert fail %f\n", memsize);
-            return -1;
-        }
-        ioCodecCtx->rgbaFrame->width = dstWidth;
-        ioCodecCtx->rgbaFrame->height = dstHeight;
-        ioCodecCtx->rgbaContext = sws_getContext(srcWidth, srcHeight, srcPixFmt,
-                                                dstWidth, dstHeight, dstPixFmt,
-                                                sws_flags, NULL, NULL, NULL);
-
-        ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
-    }
-    
-    float avg_frame_rate = av_q2d(ioCodecCtx->video_stream->avg_frame_rate);
-//    float r_frame_rate = av_q2d(ioCodecCtx->video_stream->r_frame_rate);
-
-    ioCodecCtx->frame_rate = 1000 / avg_frame_rate;
-
-    float max_b = 6;
-    videoState->threshold = ceil(ioCodecCtx->frame_rate / 2);
-    videoState->seek_threshold = max_b * avg_frame_rate;
-    
-    //解析关键帧
-    _ff_parser_keyframes(ioCodecCtx);
-    
-    if (this->videoState->initcb) {
-        VideoInfo info = {
-            ioCodecCtx->avcodec_context->width,
-            ioCodecCtx->avcodec_context->height,
-            static_cast<float>(ioCodecCtx->durationMs),
-            avg_frame_rate
-        };
-        this->videoState->initcb(info);
-    }
-    
-//    auto future = std::async(std::launch::async, decode_event_thread, this);
-//    auto f = std::async([] {
-//        std::cout << "任务2-开始\n";
-////        this_thread::sleep_for(std::chrono::seconds(2));
-//        std::cout << "任务2-结束\n";
-//    });
-//    this->task_stop = true;
-//    std::thread([this]() {
-//        while (true) {
-//        
-//        }
-//    }).detach();
-//
-//    auto getNum = std::async(std::launch::async, decode_event, 2);
-//    auto getRet = getNum.get();
-//    std::cout << getRet << std::endl; // 4
-
-    videoState->event = DECODE_EVENT_INIT;
-    return 0;
-}
-
-int ffdecode::ff_set_param(int rotate) {
-    if (rotate < 0 || rotate > 360) {
-        av_log(NULL, AV_LOG_ERROR, "ff_set_param rotate error %d\n", rotate);
-        return -1;
-    }
-    return 0;
-}
-
-int ffdecode::ff_decode_frame(float consume_pts) {
-    videoState->event = DECODE_EVENT_DECODE;
-    this->task_stop = false;
-    AVFrame *outFrame = NULL;
-    int ret = ff_decode_frame_unit(videoState, consume_pts, &outFrame);
-    if (this->videoState->decodecb && outFrame) {
-        if (videoState->ioCodecCtx->rotate > 0 || videoState->pixelFormat != AV_PIX_FMT_YUV420P) {
-            AVFrame *dstFrame = nullptr;
-            ret = _ff_swsscale_frame(videoState, outFrame, &dstFrame);
-            if (ret == 0 && dstFrame) {
-                this->videoState->decodecb(dstFrame, consume_pts);
+static int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
+    int ret = FF_DECODE_OK;
+    // 读取 AVFrame
+    ret = avcodec_receive_frame(ioCodecCtx->avcodec_context, frame);
+    /* 释放 frame 里面的YUV数据，
+     * 由于 avcodec_receive_frame 函数里面会调用 av_frame_unref，所以下面的代码可以注释。
+     * 所以我们不需要 手动 unref 这个 AVFrame
+     * */
+    // av_frame_unref(frame);
+    if (ret == 0) {
+        //
+        if (ioCodecCtx->avcodec_context->width != frame->linesize[0]) {
+            int height = sws_scale(ioCodecCtx->sws_context,
+                                   (const uint8_t *const *)ioCodecCtx->srcFrame->data, ioCodecCtx->srcFrame->linesize,
+                                   0, ioCodecCtx->srcFrame->height,
+                                   ioCodecCtx->swsFrame->data,
+                                   ioCodecCtx->swsFrame->linesize);
+            if (height <= 0) {
+                av_log(NULL, AV_LOG_ERROR, "decoderPacket sws_scale error, height is %d\n", height);
+                return height;
+            }
+            if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
+                _ff_yuv_rotate(ioCodecCtx->rotate, ioCodecCtx->swsFrame, ioCodecCtx->rotateFrame);
+                ioCodecCtx->swsFrame = ioCodecCtx->rotateFrame;
             }
         } else {
-            if (ret == 0 && outFrame) {
-                this->videoState->decodecb(outFrame, consume_pts);
+            if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
+                _ff_yuv_rotate(ioCodecCtx->rotate, frame, ioCodecCtx->rotateFrame);
+                ioCodecCtx->swsFrame = ioCodecCtx->rotateFrame;
+            } else {
+                ioCodecCtx->swsFrame = frame;
             }
         }
-    }
-    return ret;
-}
 
-int ffdecode::ff_hold_seek(bool seek) {
-    if (seek) {
-        videoState->event = DECODE_EVENT_WILL_SEEK;
+        //统一处理, 转成rgba
+        
+        return ret;
     } else {
-        videoState->event = DECODE_EVENT_DID_SEEK;
+        return ret;
     }
-
-    videoState->seeking = seek;
-    return 0;
-}
-
-int ffdecode::ff_seek_frame(float consume_pts) {
-    videoState->event = DECODE_EVENT_SEEK;
-    task_stop = true;
-    videoState->ioCodecCtx->packet_eof = false;
-    videoState->ioCodecCtx->decode_eof = false;
-    videoState->ioCodecCtx->error_exit = false;
-    videoState->video_decode_frame_pts = -1;
-    //取消所有任务
-    this->task_stop = false;
-    AVFrame *outFrame = NULL;
-    int ret = ff_decode_frame_unit(videoState, consume_pts, &outFrame);
-    if (this->videoState->decodecb && outFrame) {
-        if (videoState->ioCodecCtx->rotate > 0 || videoState->pixelFormat != AV_PIX_FMT_YUV420P) {
-            AVFrame *dstFrame = nullptr;
-            ret = _ff_swsscale_frame(videoState, outFrame, &dstFrame);
-            if (ret == 0 && dstFrame) {
-                this->videoState->decodecb(dstFrame, consume_pts);
-            }
-        } else {
-            if (ret == 0 && outFrame) {
-                this->videoState->decodecb(outFrame, consume_pts);
-            }
-        }
-    }
-    return ret;
-}
-
-int ffdecode::ff_decode_free(long handle) {
-    videoState->event = DECODE_EVENT_STOP;
-    FFCodecContext *ioCodecCtx = videoState->ioCodecCtx;
-
-//    if (ioCodecCtx->avio_buffer) {
-//        av_free(ioCodecCtx->avio_buffer);
+//    else if (AVERROR(EAGAIN) == ret) {
+//        // 提示 EAGAIN 代表 解码器 需要 更多的 AVPacket
+//        // 跳出 第一层 for，让 解码器拿到更多的 AVPacket
+//        return ret;;
+//    } else if (AVERROR_EOF == ret) {
+//        //提示 AVERROR_EOF 代表之前已经往 解码器发送了一个 data 跟 size 都是 NULL 的 AVPacket
+//        return ret;;
+//    } else {
+//        printf("other fail \n");
+//        return ret;
 //    }
-
-    if (ioCodecCtx->avio_ctx) {
-//        avio_close(ioCodecCtx->avio_ctx);
-        avio_context_free(&ioCodecCtx->avio_ctx);
-    }
-
-    if (ioCodecCtx->srcFrame) {
-        av_frame_free(&ioCodecCtx->srcFrame);
-    }
-        
-    if (ioCodecCtx->avpacket) {
-        av_packet_free(&ioCodecCtx->avpacket);
-    }
-
-    if (ioCodecCtx->swsFrame) {
-        av_freep(&ioCodecCtx->swsFrame->data[0]);
-        av_frame_free(&ioCodecCtx->swsFrame);
-    }
-    
-    if (ioCodecCtx->sws_context) {
-        sws_freeContext(ioCodecCtx->sws_context);
-    }
-
-    if (ioCodecCtx->rotateFrame) {
-        av_frame_free(&ioCodecCtx->rotateFrame);
-    }
-    if (ioCodecCtx->rgbaContext) {
-        sws_freeContext(ioCodecCtx->rgbaContext);
-    }
-    
-    if (ioCodecCtx->avcodec_context) {
-        avcodec_close(ioCodecCtx->avcodec_context);
-        avcodec_free_context(&ioCodecCtx->avcodec_context);
-    }
-
-    if (ioCodecCtx->fmt_ctx) {
-//        avformat_close_input(&ioCodecCtx->fmt_ctx);
-        avformat_free_context(ioCodecCtx->fmt_ctx);
-    }
-    
-    if (ioCodecCtx) {
-        free(ioCodecCtx);
-    }
-    if (videoState) {
-        free(videoState);
-    }
-    if (ioBuffer) {
-        free(ioBuffer);
-    }
-    
-    this->thread_stop = true;
-    free(videoState);
-    videoState = NULL;
-
     return 0;
 }
 
-//AVFrame * ffdecode::getFrontBuffer() {
-//    return _hasBuffer ? bufferList[1 - _currentBackBufferIndex] : nullptr;
-//
-//}
-//AVFrame * ffdecode::getBackBuffer() {
-//    return _hasDestroy ? nullptr : bufferList[_currentBackBufferIndex];
-//}
-//
-//void ffdecode::swapBuffer() {
-//    _currentBackBufferIndex = 1 - _currentBackBufferIndex;
-//    _hasBuffer = true;
-//}
-
-int ffdecode::ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **outFrame) {
+#pragma mark - decode thread
+static int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **outFrame) {
     if (videoState == NULL || consume_pts < 0 || outFrame == NULL || consume_pts > videoState->ioCodecCtx->durationMs) {
         av_log(NULL, AV_LOG_ERROR, "decode param error\n");
         return -1;
@@ -662,21 +428,24 @@ int ffdecode::ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, 
         return 1;
     }
     if (ioCodecCtx->decode_eof) {
-        av_log(NULL, AV_LOG_ERROR, "All packet has been decode\n");
+        av_log(NULL, AV_LOG_ERROR, "All frame has been decode\n");
         return 1;
     }
     
     if (ioCodecCtx->packet_eof) {
 //        av_log(NULL, AV_LOG_ERROR, "all frame has been packet_eof\n");
 //        return -1;
+
     }
     
     videoState->video_consume_pts = consume_pts;
+    
     //先找缓存
-    if (videoState->video_decode_frame_pts >= 0 &&
-        (videoState->video_decode_frame_pts >= consume_pts || fabsf(videoState->video_decode_frame_pts - consume_pts) < fabsf(videoState->threshold))) {
+    if ((videoState->video_decode_frame_pts >= consume_pts || fabsf(videoState->video_decode_frame_pts - consume_pts) < fabsf(videoState->threshold))) {
+        //    ff_writer_yuv(ioCodecCtx, consume_pts);
+        *outFrame = ioCodecCtx->swsFrame;
         ff_log("hit cache consume_pts %f cache pts %f", consume_pts, videoState->video_decode_frame_pts);
-        *outFrame = ioCodecCtx->outFrameP;
+//        videoState->video_decode_frame_pts = -1;
         return 0;
     }
 
@@ -717,8 +486,8 @@ int ffdecode::ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, 
     if (seek_flag) {
 //        bool inSameGop = ff_is_same_gop(ioCodecCtx, consume_pts, videoState->video_prev_consume_pts);
 //        if (!inSameGop) {
-        float key_pts = _ff_depend_keyframe(ioCodecCtx, consume_pts);
-        ff_log("hit seek keyframe %f to %f gap %f", key_pts, consume_pts, consume_pts - key_pts);
+        float keyPts = _ff_depend_keyframe(ioCodecCtx, consume_pts);
+        ff_log("hit seek from %f to %f gap %f", keyPts, consume_pts, consume_pts - keyPts);
         _ff_stream_seek(ioCodecCtx, consume_pts);
 //        }
     } else if (decode_flag) {
@@ -729,19 +498,23 @@ int ffdecode::ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, 
     bool stop_flag = false;
     //读取packet和读取frame要分开两个函数, 因为packet和frame不是一一对应的关系, 当packet读取结束时, 还可以继续去读取缓存里的frame
     while (true) {
-        if (stop_flag || ioCodecCtx->decode_eof || ioCodecCtx->error_exit) {
-            ff_log("ERROR: stop_flag = %d, decode_eof = %d, error_exit = %d", stop_flag, ioCodecCtx->decode_eof, ioCodecCtx->error_exit);
+        if (stop_flag == true) {
+            ff_log("stop_flag");
             break;
         }
-        ret = _ff_send_video_packet(ioCodecCtx, consume_pts, videoState->event == DECODE_EVENT_SEEK);
-        if (ret != AVERROR_EOF && ret != AVERROR(EAGAIN) && ret < 0) {
+        if (find_flag || ioCodecCtx->decode_eof || ioCodecCtx->error_exit) {
+            ff_log("find_flag = %d, decode_eof = %d, error_exit = %d", find_flag, ioCodecCtx->decode_eof, ioCodecCtx->error_exit);
+            break;
+        }
+        ret = _ff_send_video_packet(ioCodecCtx);
+        if (ret != FF_DECODE_OK && ret != AVERROR_EOF && ret != AVERROR(EAGAIN)) {
             av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet fail %s\n", av_err2str(ret));
             ioCodecCtx->error_exit = true;
             break;
         }
         // 循环不断从解码器读数据，直到没有数据可读。
         while (true) {
-            ret = _ff_receive_video_frame(ioCodecCtx, ioCodecCtx->srcFrame, &ioCodecCtx->outFrameP);
+            ret = _ff_receive_video_frame(ioCodecCtx, ioCodecCtx->srcFrame);
             if (ret == FF_DECODE_OK) {
                 float ptsMs = ioCodecCtx->srcFrame->pts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
                 float dtsMs = ioCodecCtx->srcFrame->pkt_dts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
@@ -749,15 +522,19 @@ int ffdecode::ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, 
 
                 videoState->video_decode_frame_pts = ptsMs;
                 if (fabsf(ptsMs - consume_pts) < fabsf(videoState->threshold)) {
-                    *outFrame = ioCodecCtx->outFrameP;
-                    stop_flag = true;
+                    *outFrame = ioCodecCtx->swsFrame;
                     find_flag = true;
                     break;
                 } else {
-                    if (videoState->video_decode_frame_pts > consume_pts) {
-                        *outFrame = ioCodecCtx->outFrameP;
+                    if (decode_flag) {
                         stop_flag = true;
                         break;
+                    } else if (seek_flag) {
+                        if (videoState->video_decode_frame_pts > consume_pts) {
+                            *outFrame = ioCodecCtx->swsFrame;
+                            find_flag = true;
+                            break;
+                        }
                     }
                 }
             } else {
@@ -779,7 +556,8 @@ int ffdecode::ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, 
     
     if (find_flag) {
         float ptsMs = ioCodecCtx->srcFrame->pts * av_q2d(ioCodecCtx->video_stream->time_base) * 1000;
-        ff_log("hit decode success consume pts %f, frame pts: %f, diff: %f", consume_pts, ptsMs, consume_pts - ptsMs);
+        ff_log("decode success consume pts %f, frame pts: %f, diff: %f", consume_pts, ptsMs, consume_pts - ptsMs);
+        
     } else {
         if (ret == FF_DECODE_OK) {
             ff_log("decode success, but no consume pts %f", consume_pts);
@@ -801,164 +579,382 @@ int ffdecode::ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, 
     return 0;
 }
 
-//是否是seek事件, 是手动的触发seek时间, decode事件下的seek操作不执行丢帧策略
-int ffdecode::_ff_send_video_packet(FFCodecContext *ioCodecCtx, float consume_pts, bool ff_decode_event) {
-    if (ioCodecCtx->packet_eof) {
-        return AVERROR_EOF;
-    }
+static void *decode_event_thread(void *ctx) {
+
     while (true) {
-        int ret = av_read_frame(ioCodecCtx->fmt_ctx, ioCodecCtx->avpacket);
-        if (ret == FF_DECODE_OK) {
-            if (ioCodecCtx->video_stream_index != ioCodecCtx->avpacket->stream_index) {
-                av_packet_unref(ioCodecCtx->avpacket);
-                continue;
-            }
-            float ptsMs = ioCodecCtx->avpacket->pts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
-            float dtsMs = ioCodecCtx->avpacket->dts * av_q2d(ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->time_base) * 1000;
+        FFVideoState *videoState = (FFVideoState *)ctx;
 
-            bool isKeyFrame = ioCodecCtx->avpacket->flags & AV_PKT_FLAG_KEY;
-            ff_log("read packet keyframe %d, ptsMs: %f, dtsMs %f", isKeyFrame, ptsMs, dtsMs);
-            //sps pps 软解码不支持annex模式, 转成startcode会导致软解无法解码
-//            if (!ioCodecCtx->mPacketIsHadSpsPps) {
-//                AVPacket new_packet;
-//                av_init_packet(&new_packet);
-//                if (ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->codecpar->codec_id == AV_CODEC_ID_H264) {
-//                    ioCodecCtx->mBitFilterContext = av_bitstream_filter_init("h264_mp4toannexb");
-//                    if (ioCodecCtx->mBitFilterContext == NULL) {
-//                        printf("cannot open the h264_mp4toannexb");
-//                    }
-//                } else if (ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->codecpar->codec_id == AV_CODEC_ID_HEVC) {
-//                    ioCodecCtx->mBitFilterContext = av_bitstream_filter_init("hevc_mp4toannexb");
-//                    if (ioCodecCtx->mBitFilterContext == NULL) {
-//                        printf("cannot open the hevc_mp4toannexb");
-//                    }
-//                }
-//                if (NULL != ioCodecCtx->mBitFilterContext) {
-//                    av_bitstream_filter_filter(ioCodecCtx->mBitFilterContext, ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->codec, NULL, &new_packet.data, &new_packet.size, ioCodecCtx->avpacket->data, ioCodecCtx->avpacket->size, 0);
-//                } else {
-//                    ioCodecCtx->mIsStreamNotSupport = true;
-//                    return -3;
-//                }
-//
-//                ioCodecCtx->avcodec_context = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->codec;
-//                av_packet_unref(&new_packet);
-//                ioCodecCtx->mPacketIsHadSpsPps = true;
-//                ioCodecCtx->mBitFilterContext = NULL;
-//            }
-
-            if (ff_decode_event) {
-                int nal_unit_type = (ioCodecCtx->avpacket->data[4] & 0x1F);
-                int nal_ref_idc = (ioCodecCtx->avpacket->data[4] & 0x60);
-                
-                if ((nal_ref_idc == 0 || nal_ref_idc == 1) && fabs(consume_pts - ptsMs) > videoState->seek_threshold) {
-                    ff_log("== nal_unit_type %d, ==nal_ref_idc %d", nal_unit_type, nal_ref_idc);
-                    continue;
-                }
-            }
-
-            avcodec_send_packet(ioCodecCtx->avcodec_context, ioCodecCtx->avpacket);
-            av_packet_unref(ioCodecCtx->avpacket);
-
-            return ret;
-        } else {
-            if (ret == AVERROR_EOF) {
-                // 读取完文件，这时候 pkt 的 data 跟 size 应该是 null
-                avcodec_send_packet(ioCodecCtx->avcodec_context, NULL);
-                ioCodecCtx->packet_eof = true;
-                return ret;
-            } else if (ret == AVERROR(EAGAIN)) {
-//                continue; //这里需要缓存, 尝试再次发送
-                av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet ret %d, %s\n", ret, av_err2str(ret));
-                return ret; //验证下是否需要特殊处理???
-            } else {
-                av_log(NULL, AV_LOG_ERROR, "ERROR: read error code %d, %s \n", ret, av_err2str(ret));
-                return ret;
-            }
+        AVFrame *outFrame = NULL;
+        int ret = ff_decode_frame_unit(videoState, videoState->video_consume_pts, &outFrame);
+        if (ret != 0) {
+            av_log(NULL, AV_LOG_ERROR, "ff_decode_frame_unit error %d\n", ret);
+            break;
+        }
+        if (outFrame) {
+            videoState->decodecb(outFrame, videoState->video_consume_pts);
         }
     }
-    return FF_DECODE_OK;
+
+    return NULL;
 }
 
-int ffdecode::_ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *srcFrame, AVFrame **dstFrame) {
-    int ret = FF_DECODE_OK;
-    ret = avcodec_receive_frame(ioCodecCtx->avcodec_context, srcFrame);
-    printf("avcodec_receive_frame ret %d\n", ret);
-    /* 释放 frame 里面的YUV数据，
-     * 由于 avcodec_receive_frame 函数里面会调用 av_frame_unref，所以下面的代码可以注释。
-     * 所以我们不需要 手动 unref 这个 AVFrame
-     * */
-    // av_frame_unref(frame);
-    if (ret == 0) {
-        if (ioCodecCtx->avcodec_context->width != srcFrame->linesize[0]) {
-            int height = sws_scale(ioCodecCtx->sws_context,
-                                   (const uint8_t *const *)srcFrame->data, srcFrame->linesize,
-                                   0, srcFrame->height,
-                                   ioCodecCtx->swsFrame->data,
-                                   ioCodecCtx->swsFrame->linesize);
-            if (height <= 0) {
-                av_log(NULL, AV_LOG_ERROR, "decoderPacket sws_scale error, height is %d\n", height);
-                return -1;
-            }
-            *dstFrame = ioCodecCtx->swsFrame;
+#pragma mark - interface
+
+ffdecode::ffdecode() {
+    
+}
+
+int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, const char *outputFile, InitCallback initcb, DecodeCallback cb) {
+    int ret = 0;
+    int err;
+
+    FFCodecContext *ioCodecCtx = (FFCodecContext *)av_mallocz(sizeof(FFCodecContext));
+    if (ioCodecCtx == nullptr) {
+        av_log(NULL, AV_LOG_ERROR, "malloc FFCodecContext fail\n");
+        return -1;
+    }
+    this->videoState = (FFVideoState *)av_mallocz(sizeof(FFVideoState));
+    ioBuffer = (FFBufferData *)av_mallocz(sizeof(FFBufferData));
+    videoState->ioCodecCtx = ioCodecCtx;
+    videoState->decodecb = cb;
+    videoState->initcb = initcb;
+    
+    if (pix_fmt == 1) {
+        videoState->pixelFormat = AV_PIX_FMT_YUV420P;
+    } else if (pix_fmt == 2) {
+        videoState->pixelFormat = AV_PIX_FMT_RGBA;
+    }
+
+    av_log_set_level(AV_LOG_DEBUG);
+    ioCodecCtx->avio_ctx_buffer_size = AVIO_BUFFER_SIZE;
+
+    ioBuffer->ptr = heapData;
+    ioBuffer->ori_ptr = heapData;
+    ioBuffer->has_size = file_len;
+    ioBuffer->file_size = file_len;
+    ff_log("file size %zu", file_len);
+    // 打开输入文件
+    ioCodecCtx->fmt_ctx = avformat_alloc_context();
+    if (!ioCodecCtx->fmt_ctx) {
+        av_log(NULL, AV_LOG_ERROR, "error code %d \n", AVERROR(ENOMEM));
+        return ENOMEM;
+    }
+
+    ioCodecCtx->avio_buffer = (uint8_t *)av_malloc(ioCodecCtx->avio_ctx_buffer_size);
+    if (ioCodecCtx->avio_buffer == NULL) {
+        av_log(NULL, AV_LOG_ERROR, "avio_ctx_buffer is NULL\n");
+        return -1;
+    }
+
+    if (!ioCodecCtx->avio_buffer) {
+        av_log(NULL, AV_LOG_ERROR, "error code %d \n", AVERROR(ENOMEM));
+        return ENOMEM;
+    }
+    ioCodecCtx->avio_ctx = avio_alloc_context(ioCodecCtx->avio_buffer, ioCodecCtx->avio_ctx_buffer_size, 0, ioBuffer, &read_packet_ptr, NULL, &seek_in_buffer_ptr);
+    if (!ioCodecCtx->avio_ctx) {
+        av_log(NULL, AV_LOG_ERROR, "error code %d \n", AVERROR(ENOMEM));
+        return ENOMEM;
+    }
+    ioCodecCtx->fmt_ctx->pb = ioCodecCtx->avio_ctx;
+
+    if ((err = avformat_open_input(&ioCodecCtx->fmt_ctx, NULL, NULL, NULL)) < 0) {
+        av_log(NULL, AV_LOG_ERROR, "can not open file %d \n", err);
+        return err;
+    }
+
+    ret = avformat_find_stream_info(ioCodecCtx->fmt_ctx, NULL);
+    if (ret < 0) {
+        av_log(NULL, AV_LOG_ERROR, "avformat_find_stream_info file %d \n", ret);
+        return ret;
+    }
+
+    // 打开解码器
+    ioCodecCtx->avcodec_context = avcodec_alloc_context3(NULL);
+    ioCodecCtx->video_stream_index = av_find_best_stream(ioCodecCtx->fmt_ctx, AVMEDIA_TYPE_VIDEO, -1, -1, NULL, 0);
+    ret = avcodec_parameters_to_context(ioCodecCtx->avcodec_context, ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index]->codecpar);
+    if (ret < 0) {
+        av_log(NULL, AV_LOG_ERROR, "error code %d \n", ret);
+        return ret;
+    }
+    const AVCodec *codec = avcodec_find_decoder(ioCodecCtx->avcodec_context->codec_id);
+    if ((ret = avcodec_open2(ioCodecCtx->avcodec_context, codec, NULL)) < 0) {
+        av_log(NULL, AV_LOG_ERROR, "open codec faile %d \n", ret);
+        return ret;
+    }
+
+#ifdef __APPLE__
+    if (outputFile != NULL && outputFile[0] != '\0') {
+        outfile = fopen(outputFile, "wb");
+        if (!outfile) {
+            av_log(NULL, AV_LOG_ERROR, "ERROR: open file %s\n", outputFile);
+            return -1;
+        }
+    }
+#endif
+
+    float durationMs = get_videostream_durationMs(videoState->ioCodecCtx);
+    ioCodecCtx->durationMs = durationMs;
+    
+    ioCodecCtx->avpacket = av_packet_alloc();
+    ioCodecCtx->srcFrame = av_frame_alloc();
+
+    {
+        //yuv420p -> yuv420p/rgba
+        enum AVPixelFormat srcPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
+        enum AVPixelFormat dstPixFmt = videoState->pixelFormat;
+        int dstWidth = ioCodecCtx->avcodec_context->width;
+        int dstHeight = ioCodecCtx->avcodec_context->height;
+        int srcWidth = dstWidth;
+        int srcHeight = dstHeight;
+
+        ioCodecCtx->swsFrame = av_frame_alloc();
+        ioCodecCtx->swsFrame->format = dstPixFmt;
+        ret = av_image_alloc(ioCodecCtx->swsFrame->data, ioCodecCtx->swsFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
+        
+        ioCodecCtx->swsFrame->width = dstWidth;
+        ioCodecCtx->swsFrame->height = dstHeight;
+        ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
+                                                dstWidth, dstHeight, dstPixFmt,
+                                                sws_flags, NULL, NULL, NULL);
+        ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
+    }
+        
+    //开启多线程解码
+    ioCodecCtx->avcodec_context->thread_count = 8;
+    //丢弃哪些帧不解码
+    ioCodecCtx->avcodec_context->skip_frame = AVDISCARD_NONREF;
+//    ioCodecCtx->avcodec_context->skip_loop_filter = AVDISCARD_DEFAULT;
+//    ioCodecCtx->avcodec_context->skip_idct = AVDISCARD_DEFAULT;
+
+    //丢弃哪些帧不解码
+    AVStream *video_stream = ioCodecCtx->fmt_ctx->streams[ioCodecCtx->video_stream_index];
+    ioCodecCtx->video_stream = video_stream;
+    video_stream->discard = AVDISCARD_NONREF;
+    int srcRotate = ffrotate::getRotateAngle(video_stream);
+//    srcRotate = 90;
+    ff_log("rotate: %d", srcRotate);
+    ioCodecCtx->rotate = srcRotate;
+    // 0 水平 不需要转
+    // 90 270 交换宽高，转成竖的
+    // 180 水平反向，宽高不用交换，但需要转正
+
+    if (srcRotate == 90 || srcRotate == 270 || srcRotate == 180) {
+        if (fabs(srcRotate - 90) < 1.0) {
+            int temp = ioCodecCtx->avcodec_context->width;
+            ioCodecCtx->rotateWidth = ioCodecCtx->avcodec_context->height;
+            ioCodecCtx->rotateHeight = temp;
+        } else if (fabs(srcRotate - 180) < 1.0 || fabs(srcRotate + 180) < 1.0) {
+            ioCodecCtx->rotateWidth = ioCodecCtx->avcodec_context->width;
+            ioCodecCtx->rotateHeight = ioCodecCtx->avcodec_context->height;
+        } else if (fabs(srcRotate - 270) < 1.0 || fabs(srcRotate + 90) < 1.0) {
+            int temp = ioCodecCtx->avcodec_context->width;
+            ioCodecCtx->rotateWidth = ioCodecCtx->avcodec_context->height;
+            ioCodecCtx->rotateHeight = temp;
         } else {
-            *dstFrame = srcFrame;
+            // 0 degreee do nothing
+        }
+
+        //yuv420p -> rotate yuv420p
+        enum AVPixelFormat srcPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
+        enum AVPixelFormat dstPixFmt = ioCodecCtx->avcodec_context->pix_fmt;
+        int srcWidth = ioCodecCtx->avcodec_context->width;
+        int srcHeight = ioCodecCtx->avcodec_context->height;
+        int dstWidth = ioCodecCtx->rotateWidth;
+        int dstHeight = ioCodecCtx->rotateHeight;
+
+        ioCodecCtx->rotateFrame = av_frame_alloc();
+        ioCodecCtx->rotateFrame->format = dstPixFmt;
+        ret = av_image_alloc(ioCodecCtx->rotateFrame->data, ioCodecCtx->rotateFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
+
+        ioCodecCtx->rotateFrame->width = dstWidth;
+        ioCodecCtx->rotateFrame->height = dstHeight;
+        ioCodecCtx->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt,
+                                                dstWidth, dstHeight, dstPixFmt,
+                                                sws_flags, NULL, NULL, NULL);
+        ff_log("width = %d, height = %d", ioCodecCtx->avcodec_context->width, ioCodecCtx->avcodec_context->height);
+    }
+    
+    float avg_frame_rate = av_q2d(ioCodecCtx->video_stream->avg_frame_rate);
+//    float r_frame_rate = av_q2d(ioCodecCtx->video_stream->r_frame_rate);
+
+    ioCodecCtx->frame_rate = 1000 / avg_frame_rate;
+
+    videoState->threshold = ceil(ioCodecCtx->frame_rate / 2);
+    videoState->seek_threshold = 150;
+    
+    //解析关键帧
+    _ff_parser_keyframes(ioCodecCtx);
+    
+    if (this->videoState->initcb) {
+        VideoInfo info = {
+            ioCodecCtx->avcodec_context->width,
+            ioCodecCtx->avcodec_context->height,
+            static_cast<int>(ioCodecCtx->durationMs),
+            avg_frame_rate
+        };
+        this->videoState->initcb(info);
+    }
+    
+//    this->task_stop = true;
+//    std::thread([this]() {
+//        while (true) {
+//            if (task_stop) {
+////                usleep(5 * 1000);
+//                std::this_thread::sleep_for(std::chrono::milliseconds(5));//睡眠1000毫秒（1秒）
+//                continue;
+//            }
+//            if (thread_stop) {
+//                break;
+//            }
+//            float consume_pts = this->consume_pts;
+//            std::thread::id tid = std::this_thread::get_id();
+//            printf("thread consume_pts %f tid %d\n", consume_pts, *(unsigned int*)&tid);
+//            AVFrame *outFrame = nullptr;
+//            if (&outFrame) {
+//                int ret = ff_decode_frame_unit(videoState, consume_pts, &outFrame);
+//                if (this->videoState->decodecb) {
+//                    if (outFrame) {
+//                        this->videoState->decodecb(outFrame, consume_pts);
+//                    }
+//                }
+//                if (ret < 0) {
+//                    break;
+//                } else {
+//                    task_stop = true;
+//                }
+////                return ret;
+//            } else {
+//                AVFrame *outFrame = NULL;
+//                int ret = ff_decode_frame_unit(videoState, consume_pts, &outFrame);
+//                if (ret < 0) {
+//                    break;
+//                }
+////                return ret;
+//            }
+//        }
+//    }).detach();
+//
+//    auto getNum = std::async(std::launch::async, decode_event, 2);
+//    auto getRet = getNum.get();
+//    std::cout << getRet << std::endl; // 4
+
+    videoState->event = DECODE_EVENT_INIT;
+    return 0;
+}
+
+int ffdecode::ff_decode_frame(float consume_pts, AVFrame **outFrame) {
+    videoState->event = DECODE_EVENT_DECODE;
+//    if (videoState->running) {
+//        printf("running\n");
+//        return 0;
+//    }
+    this->task_stop = false;
+    this->consume_pts = consume_pts;
+//    ff_log("this->consume_pts %f", consume_pts);
+    if (outFrame) {
+        int ret = ff_decode_frame_unit(videoState, consume_pts, outFrame);
+        if (this->videoState->decodecb) {
+            if (*outFrame) {
+                this->videoState->decodecb(*outFrame, consume_pts);
+            }
         }
         return ret;
     } else {
+        AVFrame *outFrame = NULL;
+        int ret = ff_decode_frame_unit(videoState, consume_pts, &outFrame);
         return ret;
     }
-//    else if (AVERROR(EAGAIN) == ret) {
-//        // 提示 EAGAIN 代表 解码器 需要 更多的 AVPacket
-//        // 跳出 第一层 for，让 解码器拿到更多的 AVPacket
-//        return ret;;
-//    } else if (AVERROR_EOF == ret) {
-//        //提示 AVERROR_EOF 代表之前已经往 解码器发送了一个 data 跟 size 都是 NULL 的 AVPacket
-//        return ret;;
-//    } else {
-//        printf("other fail \n");
-//        return ret;
-//    }
+    
+    return 0;
 }
 
-int ffdecode::_ff_swsscale_frame(FFVideoState *videoState, AVFrame *srcFrame, AVFrame **dstFrame) {
-    AVFrame *frameP = srcFrame;
-    FFCodecContext *ioCodecCtx = videoState->ioCodecCtx;
-    if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
-        _ff_yuv_rotate(ioCodecCtx->rotate, srcFrame, ioCodecCtx->rotateFrame);
-        frameP = ioCodecCtx->rotateFrame;
+int ffdecode::ff_hold_seek(bool seek) {
+    if (seek) {
+        videoState->event = DECODE_EVENT_WILL_SEEK;
+    } else {
+        videoState->event = DECODE_EVENT_DID_SEEK;
     }
 
-    AVPixelFormat pixFmt = (AVPixelFormat)srcFrame->format;
-    //统一处理, 转成rgba
-    if (videoState->pixelFormat == AV_PIX_FMT_RGBA) {
-        int height = sws_scale(ioCodecCtx->rgbaContext,
-                               (const uint8_t *const *)frameP->data, frameP->linesize,
-                               0, frameP->height,
-                               ioCodecCtx->rgbaFrame->data,
-                               ioCodecCtx->rgbaFrame->linesize);
-        if (height <= 0) {
-            av_log(NULL, AV_LOG_ERROR, "decoderPacket sws_scale error, height is %d\n", height);
-            return -1;
-        }
-        frameP = ioCodecCtx->rgbaFrame;
+    videoState->seek = seek;
+    return 0;
+}
+
+int ffdecode::ff_seek_frame(float ptsMs, AVFrame **outFrame) {
+//    if (videoState->running) {
+//        return 0;
+//    }
+    videoState->event = DECODE_EVENT_SEEK;
+    //先把缓冲读完, 防止读到旧数据
+    task_stop = true;
+    videoState->ioCodecCtx->packet_eof = false;
+    videoState->ioCodecCtx->decode_eof = false;
+    videoState->ioCodecCtx->error_exit = false;
+    videoState->video_decode_frame_pts = -1;
+    //取消所有任务
+    int ret = ffdecode::ff_decode_frame(ptsMs, outFrame);
+    return ret;
+}
+
+int ffdecode::ff_decode_free(long handle) {
+    FFCodecContext *ioCodecCtx = videoState->ioCodecCtx;
+
+//    if (ioCodecCtx->avio_buffer) {
+//        av_free(ioCodecCtx->avio_buffer);
+//    }
+
+    if (ioCodecCtx->avio_ctx) {
+//        avio_close(ioCodecCtx->avio_ctx);
+        avio_context_free(&ioCodecCtx->avio_ctx);
+    }
+
+    if (ioCodecCtx->srcFrame) {
+        av_frame_free(&ioCodecCtx->srcFrame);
+    }
+        
+    if (ioCodecCtx->avpacket) {
+        av_packet_free(&ioCodecCtx->avpacket);
+    }
+
+    if (ioCodecCtx->swsFrame) {
+        av_freep(&ioCodecCtx->swsFrame->data[0]);
+        av_frame_free(&ioCodecCtx->swsFrame);
     }
     
-    // libyuv::I420ToRGBA(NULL, 0, NULL, 0, NULL, 0, NULL, 0, 0, 0);
-//    libyuv::I420
-    /*
-     I420ToRGBA(const uint8_t* src_y,
-                    int src_stride_y,
-                    const uint8_t* src_u,
-                    int src_stride_u,
-                    const uint8_t* src_v,
-                    int src_stride_v,
-                    uint8_t* dst_rgba,
-                    int dst_stride_rgba,
-                    int width,
-                    int height);
+    if (ioCodecCtx->sws_context) {
+        sws_freeContext(ioCodecCtx->sws_context);
+    }
 
-     */
-    *dstFrame = frameP;
+    if (ioCodecCtx->rotateFrame) {
+        av_frame_free(&ioCodecCtx->rotateFrame);
+    }
+    if (ioCodecCtx->swsContext) {
+        sws_freeContext(ioCodecCtx->swsContext);
+    }
+    
+    if (ioCodecCtx->avcodec_context) {
+        avcodec_close(ioCodecCtx->avcodec_context);
+        avcodec_free_context(&ioCodecCtx->avcodec_context);
+    }
+
+    if (ioCodecCtx->fmt_ctx) {
+//        avformat_close_input(&ioCodecCtx->fmt_ctx);
+        avformat_free_context(ioCodecCtx->fmt_ctx);
+    }
+    
+    if (ioCodecCtx) {
+        free(ioCodecCtx);
+    }
+    if (videoState) {
+        free(videoState);
+        videoState = NULL;
+    }
+    if (ioBuffer) {
+        free(ioBuffer);
+        ioBuffer = NULL;
+    }
+    
+    this->thread_stop = true;
+
     return 0;
 }
 

@@ -84,14 +84,14 @@ static int read_packet_ptr(void *opaque, uint8_t *buf, int buf_size)
         av_log(NULL, AV_LOG_ERROR, "no buf pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
         return EAGAIN;
     }
-    if (!buf_size)
-    {
-        av_log(NULL, AV_LOG_ERROR, "no buf_size pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
-        return EAGAIN;
-    }
     if (buf_size <= 0) {
-        av_log(NULL, AV_LOG_ERROR, "1no buf_size pass to read_packet has_size %d,%zu\n", buf_size, bd->has_size);
-        return EAGAIN;
+        // Buffer drained: tell demuxer input reached EOF instead of transient EAGAIN.
+        // Returning EAGAIN here can trigger repeated retries and noisy logs in wasm.
+        if (bd->has_size == 0) {
+            return AVERROR_EOF;
+        }
+        av_log(NULL, AV_LOG_ERROR, "invalid buf_size in read_packet has_size %d,%zu\n", buf_size, bd->has_size);
+        return AVERROR(EINVAL);
     }
 //    float a = SIZE_MAX;
 //    printf("ptr in file:%p io.buffer ptr:%p, has_size:%zu,buf_size:%d\n", bd->ptr, buf, bd->has_size, buf_size);
@@ -507,7 +507,7 @@ static int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVF
             break;
         }
         ret = _ff_send_video_packet(ioCodecCtx);
-        if (ret != FF_DECODE_OK && ret != AVERROR_EOF && ret == AVERROR(EAGAIN)) {
+        if (ret != FF_DECODE_OK && ret != AVERROR_EOF && ret != AVERROR(EAGAIN)) {
             av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet fail %s\n", av_err2str(ret));
             ioCodecCtx->error_exit = true;
             break;
@@ -683,13 +683,13 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
     }
 
 #ifdef __APPLE__
-    outfile = fopen(outputFile, "wb");
-    if (!outfile) {
-        av_log(NULL, AV_LOG_ERROR, "ERROR: open file %s\n", outputFile);
-        return -1;
+    if (outputFile != NULL && outputFile[0] != '\0') {
+        outfile = fopen(outputFile, "wb");
+        if (!outfile) {
+            av_log(NULL, AV_LOG_ERROR, "ERROR: open file %s\n", outputFile);
+            return -1;
+        }
     }
-#else
-
 #endif
 
     float durationMs = get_videostream_durationMs(videoState->ioCodecCtx);
@@ -946,14 +946,14 @@ int ffdecode::ff_decode_free(long handle) {
     }
     if (videoState) {
         free(videoState);
+        videoState = NULL;
     }
     if (ioBuffer) {
         free(ioBuffer);
+        ioBuffer = NULL;
     }
     
     this->thread_stop = true;
-    free(videoState);
-    videoState = NULL;
 
     return 0;
 }

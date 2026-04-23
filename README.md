@@ -1,9 +1,29 @@
 # ffwasm
 
-ffmpeg wasm
+FFmpeg based wasm decoder for web playback.
 
-Git忽略文件不起作用的原因及解决办法
-https://blog.csdn.net/m0_61177939/article/details/125795043
+## Directory layout
 
-#emcc 编译参数
-#http://quanzhan.applemei.com/webStack/TlRrMU1nPT0=
+- `src`: C/C++ source code for the wasm bridge and decoder logic
+- `third`: prebuilt third-party FFmpeg static libraries and headers
+- `video`: Vite web app that consumes `video/libffwasm/libffmpeg.js`
+
+## Build wasm
+
+```bash
+source ./emsdk/emsdk_env.sh
+./buildwasm.sh
+```
+
+After build:
+
+- generated wasm/js are in `dist`
+- files are copied to `video/libffwasm`
+
+## Run web demo
+
+```bash
+cd video
+npm install
+npm run dev
+```

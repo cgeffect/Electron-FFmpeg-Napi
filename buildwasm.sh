@@ -1,11 +1,11 @@
 
-cp ./xcode/ffwasm/ffwasm/main.cpp ./src/main.cpp
+set -euo pipefail
 
 rm -rf ./dist
 mkdir ./dist
 
 export MEMORY=67108864
-export FUNCTIONS="['_ffwasm_decode_open','_ffwasm_decode_frame','_ffwasm_decode_free','_ffwasm_hold_seek','_ffwasm_seek_frame']"
+export FUNCTIONS="['_ffwasm_decode_open','_ffwasm_decode_frame','_ffwasm_decode_free','_ffwasm_hold_seek','_ffwasm_seek_frame','_malloc','_free','_main']"
 
 emcc -std=c++17 \
     ./src/main.cpp ./src/ffdecode.cpp \
@@ -25,27 +25,15 @@ emcc -std=c++17 \
     -s NO_EXIT_RUNTIME=1 \
     -s ENVIRONMENT="web" \
     -s EXPORT_ES6=1 \
-    -s USE_ES6_IMPORT_META=0 \
     -O3 \
     -o ./dist/libffmpeg.js
 
 echo "build success!"
-
-
-echo "copy ffwasm to web"
-rm -rf ./web/ffmpegkit
-mkdir -p ./web/ffmpegkit/src
-cp -r ./dist/ ./web/ffmpegkit
-
-cp ./src/main.cpp ./web/ffmpegkit/src/main.cpp
-cp ./src/ffdecode.h ./web/ffmpegkit/src/ffdecode.h
-cp ./src/ffdecode.cpp ./web/ffmpegkit/src/ffdecode.cpp
 
 echo "copy ffwasm to video"
 rm -rf ./video/libffwasm
 mkdir -p ./video/libffwasm/src
 cp -r ./dist/ ./video/libffwasm
 
-cp ./src/main.cpp ./video/libffwasm/src/main.cpp
-cp ./src/ffdecode.h ./video/libffwasm/src/ffdecode.h
-cp ./src/ffdecode.cpp ./video/libffwasm/src/ffdecode.cpp
+cp ./src/*.cpp ./video/libffwasm/src/
+cp ./src/*.h ./video/libffwasm/src/

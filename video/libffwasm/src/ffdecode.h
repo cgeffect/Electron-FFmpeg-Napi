@@ -19,8 +19,6 @@
 #define AV_LOG_VERBOSE  40
 #define AV_LOG_DEBUG    48
 
-#pragma mark - c call c++ interface
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,14 +30,10 @@ extern "C" {
 #include <libswscale/swscale.h>
 #include <libavcodec/avcodec.h>
 
-enum FF_PIX_FMT {
-    FF_PIX_FMT_I420 = 1,
-    FF_PIX_FMT_RGBA
-};
 typedef struct VideoInfo {
     int width;
     int height;
-    float durationMs;
+    int durationMs;
     float fps;
 } VideoInfo;
 
@@ -49,15 +43,13 @@ typedef void (*InitCallback)(VideoInfo info);
 void set_log_level(int level);
 
 // pix_fmt 1 = yuv, 2 = rgba
-long ffcpp_decode_init(uint8_t *heapData, size_t file_len, FF_PIX_FMT pix_fmt, InitCallback initcb, DecodeCallback cb);
+long ffcpp_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, const char *outputFile, InitCallback initcb, DecodeCallback cb);
 
-int ffcpp_set_param(long handle, int rotate);
-
-int ffcpp_decode_frame(long handle, float pts);
+int ffcpp_decode_frame(long handle, float pts, AVFrame **outFrame);
 
 int ffcpp_hold_seek(long handle, bool seek);
 
-int ffcpp_seek_frame(long handle, float ptsMs);
+int ffcpp_seek_frame(long handle, float ptsMs, AVFrame **outFrame);
 
 int ffcpp_decode_free(long handle);
 
@@ -67,18 +59,13 @@ int _av_io_decode_test(uint8_t *heapData, size_t file_len, const char *outputFil
 }
 #endif
 
-#pragma mark - cpp
-//https://dawnarc.com/2019/07/c-error-templates-must-have-c-linkage/
-#ifdef __cplusplus
-extern "C++" {
-#endif
-
-#include <thread>
+//#include <thread>
 #include <iostream>
 #include <atomic>
-#include <future>
-#include <vector>
-#include <memory>
+//#include <deque>
+//#include <condition_variable>
+//#include <future>
+
 namespace ffwasm
 {
 
@@ -94,12 +81,12 @@ typedef struct FFCodecContext {
     AVIOContext *avio_ctx;
     uint8_t *avio_buffer;
     AVCodecContext *avcodec_context;
-    int dstWidth, dstHeight;
+    int rotateWidth, rotateHeight;
     AVPacket *avpacket;
+    AVFrame *srcFrame;
     int avio_ctx_buffer_size;
     
     AVFrame *swsFrame;
-
     struct SwsContext *sws_context;
     int video_stream_index;
     AVStream *video_stream;
@@ -113,17 +100,9 @@ typedef struct FFCodecContext {
     
     //旋转
     int rotate;
-    AVFrame *rgbaFrame = nullptr;
     AVFrame *rotateFrame = nullptr;
-    SwsContext *rgbaContext = nullptr;
-
-    AVFrame *srcFrame = nullptr;
-    AVFrame *outFrameP = nullptr;
-
+    SwsContext *swsContext = nullptr;
     
-    bool mPacketIsHadSpsPps;
-    // AVBitStreamFilterContext *mBitFilterContext{nullptr};
-    bool mIsStreamNotSupport;
 } FFCodecContext;
 
 enum FFStrategyState {
@@ -162,7 +141,7 @@ typedef struct FFVideoState {
     bool running;
     
     enum AVPixelFormat pixelFormat;
-    bool seeking = false;
+    bool seek = false;
     
     FF_DECODE_EVENT event;
     
@@ -175,51 +154,27 @@ private:
     FFBufferData *ioBuffer = NULL;
     std::atomic<bool> task_stop = false;
     std::atomic<bool> thread_stop = false;
-//    std::atomic<int32_t> consume_pts = -1;
-    
-    std::shared_ptr<std::future<int>> future;
-//    std::future<int> future;
-//    AVFrame *getFrontBuffer();
-//    AVFrame *getBackBuffer();
-//    void swapBuffer();
-//    std::atomic<int> _currentBackBufferIndex;
-//    std::atomic<bool> _hasBuffer = false;
-//    std::vector<AVFrame *> bufferList;
-//    bool _hasDestroy;
-    
-    int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *srcFrame, AVFrame **dstFrame);
-    int _ff_send_video_packet(FFCodecContext *ioCodecCtx, float consume_pts, bool ff_decode_event);
-    int _ff_swsscale_frame(FFVideoState *videoState, AVFrame *srcFrame, AVFrame **dstFrame);
+    std::atomic<int32_t> consume_pts = -1;
+//    std::mutex locker = {};
+//    std::condition_variable noEmpty = {};
 
-    bool enable_rotate = false;
-    bool mPacketIsHadSpsPps = false;
-    
 public:
     ffdecode(/* args */);
     ~ffdecode();
     
-    int ff_decode_init(uint8_t *heapData, size_t file_len, FF_PIX_FMT pix_fmt, InitCallback initcb, DecodeCallback cb);
+    int ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, const char *outputFile, InitCallback initcb, DecodeCallback cb);
 
-    int ff_set_param(int rotate);
-    
-    int ff_decode_frame(float pts);
+    int ff_decode_frame(float pts, AVFrame **outFrame);
 
     int ff_hold_seek(bool seek);
 
-    int ff_seek_frame(float ptsMs);
+    int ff_seek_frame(float ptsMs, AVFrame **outFrame);
 
     int ff_decode_free(long handle);
     
     int av_io_decode_test(uint8_t *heapData, size_t file_len, const char *outputFile);
-    
-    int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVFrame **outFrame);
-
 };
 
 } // namespace ffwasm
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* ff_decode_h */

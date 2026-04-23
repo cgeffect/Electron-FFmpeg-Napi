@@ -1,148 +1,61 @@
-import FfmpegKit from '../libffwasm/libffmpeg.js'
-import { DrawYuv } from './helper.js'
+import { FFWasmPlayer } from './player'
+import type { IVideoInfo } from './types'
 
-interface IYUVObject {
-  width: number
-  height: number
-  yData: Uint8Array
-  uData: Uint8Array
-  vData: Uint8Array
+function formatDuration(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
 }
 
-interface IVideoInfo {
-  width: number
-  height: number
-  duration: number
-  fps: number
-}
-
-type decodeYUVCallback = (
-  yAddr: number, // y 数据在共享内存的起始地址
-  uAddr: number, // u 数据在共享内存的起始地址
-  vAddr: number, // v 数据在共享内存的起始地址
-  yLen: number, // y 数据的长度
-  uLen: number, // u 数据的长度
-  vLen: number, // v 数据的长度
-  width: number, // 这一帧的宽度
-  height: number, // 这一帧的高度
-  time: number // 视频中这一帧的时间 ms
-) => void
-
-// draw yuv data
-const canvas = document.getElementById('video-canvas')! as HTMLCanvasElement
-const yuvCanvas = new DrawYuv(canvas)
-const controller = document.getElementById('video-controller')! as HTMLInputElement
-
-function setStyle(width: number, height: number) {
-  canvas.width = width
-  canvas.height = height
-  canvas.style.width = `${width}px`
-  canvas.style.height = `${height}px`
-  controller.style.width = `${width + 4}px`
-}
-
-(async () => {
-  const module = await FfmpegKit({ locateFile: () => '../libffwasm/libffmpeg.wasm' })
-
-  const drawYUVFrame: decodeYUVCallback = (yAddr, uAddr, vAddr, yLen, uLen, vLen, width, height, time) => {
-    const yData = module.HEAPU8.subarray(yAddr, yAddr + yLen * height)
-    const uData = module.HEAPU8.subarray(uAddr, uAddr + uLen * height / 2)
-    const vData = module.HEAPU8.subarray(vAddr, vAddr + vLen * height / 2)
-    const yuvObject: IYUVObject = {
-      yData: new Uint8Array(yData),
-      uData: new Uint8Array(uData),
-      vData: new Uint8Array(vData),
-      width,
-      height,
-    }
-    yuvCanvas.play(yuvObject)
-  }
-  const drawYUVFrameP = module.addFunction(drawYUVFrame, 'viiiiiiiii')
-
-  let videoInfo: IVideoInfo
-  const videoInfoCallback = (width: number, height: number, duration: number, fps: number) => {
-    videoInfo = {
-      width,
-      height,
-      duration,
-      fps,
-    }
-    setStyle(width, height)
-  }
-  const videoInfoCallbackP = module.addFunction(videoInfoCallback, 'viiif')
-  const res = await fetch('/src/assets/640.mp4')
-  const videoData = await res.arrayBuffer()
-  const videoDataP = module._malloc(videoData.byteLength)
-  const heap = new Uint8Array(module.HEAPU8.buffer, videoDataP, videoData.byteLength)
-  heap.set(new Uint8Array(videoData))
-  const ret = module._ffwasm_decode_open(videoDataP, videoData.byteLength, videoInfoCallbackP)
-  if (ret < 0) {
-    console.error('_ffwasm_decode_open error')
+function renderVideoMeta(fileName: string, info: IVideoInfo | null) {
+  const metaEl = document.getElementById('video-meta')
+  if (!metaEl)
+    return
+  if (!info) {
+    metaEl.textContent = `当前文件: ${fileName} | 读取视频信息失败`
     return
   }
+  metaEl.textContent = `当前文件: ${fileName} | ${info.width}x${info.height} | 时长 ${formatDuration(info.duration)} | ${info.fps.toFixed(2)} fps`
+}
 
-  const draw = (time: number, onError?: () => void) => {
-    if (time < videoInfo.duration) {
-      console.log("\n")
-      console.log("----- start pts", time)
-      const r = module._ffwasm_decode_frame(ret, time, drawYUVFrameP)
-      if (r < 0)
-        onError && onError()
-    }
-  }
+function renderStatus(text: string, type: 'normal' | 'loading' | 'error' = 'normal') {
+  const statusEl = document.getElementById('video-status')
+  if (!statusEl)
+    return
+  statusEl.textContent = text
+  statusEl.style.color = type === 'error' ? '#ff6b6b' : type === 'loading' ? '#ffd166' : ''
+}
 
-  const seekdraw = (time: number, onError?: () => void) => {
-    if (time < videoInfo.duration) {
-      console.log("\n")
-      console.log("----- start pts", time)
-      const r = module._ffwasm_seek_frame(ret, time, drawYUVFrameP)
-      if (r < 0)
-        onError && onError()
-    }
-  }
+;(async () => {
+  try {
+    const player = new FFWasmPlayer()
+    const defaultSource = './assets/11.mp4'
+    renderStatus('正在加载默认素材...', 'loading')
+    await player.init(defaultSource)
+    renderVideoMeta(defaultSource, player.getVideoInfo())
+    renderStatus('加载完成')
 
-  let start = Date.now()
-  let rafId = requestAnimationFrame(play)
-  let delay = 0
-  let startStopTime = 0
-  function play() {
-    const d = Date.now() - start
-    if (d >= videoInfo.duration) {
-      // TODO: 播放完清空数据
-      start = Date.now()
-      delay = 0
-      startStopTime = 0
-      cancelAnimationFrame(rafId)
-      return
-    }
-    delay = d
-    controller.value = String(d / videoInfo.duration * 100)
-    draw(d, () => {
-      cancelAnimationFrame(rafId)
+    const fileInput = document.getElementById('video-file') as HTMLInputElement | null
+    fileInput?.addEventListener('change', async (event) => {
+      const target = event.target as HTMLInputElement
+      const file = target.files?.[0]
+      if (!file)
+        return
+      try {
+        renderStatus(`正在加载本地文件: ${file.name}`, 'loading')
+        await player.loadFromFile(file)
+        renderVideoMeta(file.name, player.getVideoInfo())
+        renderStatus('加载完成')
+      }
+      catch (error) {
+        console.error('[ffwasm] load local file failed', error)
+        renderStatus(`加载失败: ${file.name}`, 'error')
+      }
     })
-    rafId = requestAnimationFrame(play)
   }
-
-  document.getElementById('video-stop')?.addEventListener('click', () => {
-    startStopTime = Date.now()
-    if (rafId)
-      cancelAnimationFrame(rafId)
-  })
-  document.getElementById('video-play')?.addEventListener('click', () => {
-    const v = Number(controller.value || '0') / 100 * videoInfo.duration
-    start += Date.now() - startStopTime - (v - delay)
-    rafId = requestAnimationFrame(play)
-  })
-  controller.addEventListener('mousedown', (e: any) => {
-    const v = Number(e?.target?.value || '0') / 100 * videoInfo.duration
-    console.log("click mousedown " + v);
-    module._ffwasm_hold_seek(ret, true)
-  })
-
-  controller.addEventListener('change', (e: any) => {
-    const v = Number(e?.target?.value || '0') / 100 * videoInfo.duration
-    console.log("click mouseup " + v);
-    seekdraw(v)
-    module._ffwasm_hold_seek(ret, false)
-  })
+  catch (error) {
+    console.error('[ffwasm] init failed', error)
+    renderStatus('初始化失败，请检查 wasm 和视频资源', 'error')
+  }
 })()
