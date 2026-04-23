@@ -1,33 +1,36 @@
 # ffwasm
 
-FFmpeg based wasm decoder for web playback.
+基于 FFmpeg 的 wasm 视频解码示例工程（用于 Web 播放）。
 
-## Directory layout
+## 目录结构
 
-- `src`: C/C++ source code for the wasm bridge and decoder logic
-- `src/third-party`: prebuilt FFmpeg static libraries and headers
-- `build/wasm`: generated wasm runtime artifacts
-- `res`: web demo static resources (media + copied wasm runtime)
-- `video`: Vite web app, serves `res` via `publicDir`
+- `src`：C/C++ 源码（wasm bridge 与解码逻辑）
+- `src/third-party`：预编译的 FFmpeg 静态库与头文件
+- `build/wasm`：wasm 编译输出产物
+- `res`：Web 示例静态资源（媒体文件 + wasm runtime）
+- `video`：Vite 前端工程，通过 `publicDir` 读取 `res`
 
-## Build wasm
+## 编译 wasm
 
 ```bash
-git clone https://github.com/emscripten-core/emsdk.git
-cd ffwasm/emsdk
-source ./emsdk/emsdk_env.sh
+# 首次或需要更新 emsdk 时执行（默认安装并激活 latest）
+sh init_submodule.sh
+cd emsdk
+# 如需指定版本可在执行脚本前设置环境变量，例如：
+# EMSDK_TAG=3.1.67 sh init_submodule.sh
+source ./emsdk_env.sh
 cd ..
 ./buildwasm.sh
 ./buildwasm.sh debug
 ```
 
-After build:
+编译完成后：
 
-- generated wasm/js are in `build/wasm`
-- wasm runtime is copied to `res/wasm`
-- in `debug` mode, source files are also copied to `res/wasm/src` for Chrome source-level wasm debugging
+- wasm/js 产物位于 `build/wasm`
+- 运行时文件会复制到 `res/wasm`
+- `debug` 模式会额外复制源码到 `res/wasm/src`，便于 Chrome wasm 源码级调试
 
-## Run web demo
+## 运行 Web 示例
 
 ```bash
 cd video
@@ -35,25 +38,27 @@ npm install
 npm run dev
 ```
 
-## Recommended workflow
+## 推荐工作流
 
 ```bash
-# Build wasm runtime and sync to res/wasm
+# 生成 wasm runtime 并同步到 res/wasm
 sh buildwasm.sh
-# Or debug build:
+# 或调试构建
 sh buildwasm.sh debug
 
-# Run dev server
+# 启动前端开发服务
 cd video
 npm run dev
 
-# For release package only (generates video/dist temporarily)
+# 仅在需要发布时构建（临时生成 video/dist）
 npm run build
 ```
 
-## Video assets
+## 视频与资源说明
 
-- place test media files in `res`
-- Vite serves `res` as `publicDir`, so files are available like `/11.mp4`
-- wasm runtime is available as `/wasm/libffmpeg.js` and `/wasm/libffmpeg.wasm`
-- default demo source is `/11.mp4` (in `video/src/main.ts`)
+- 测试媒体文件放在 `res`
+- Vite 将 `res` 作为 `publicDir`，可通过 `/640.mp4` 这类路径访问
+- wasm runtime 访问路径：
+  - `/wasm/libffmpeg.js`
+  - `/wasm/libffmpeg.wasm`
+- 默认示例视频在 `video/src/main.ts` 中配置

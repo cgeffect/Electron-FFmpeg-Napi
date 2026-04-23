@@ -44,7 +44,7 @@ export class FFWasmPlayer {
     this.yuvCanvas = new DrawYuv(this.canvas)
   }
 
-  async init(defaultSource = './assets/11.mp4') {
+  async init(defaultSource?: string) {
     const runtimeUrl = new URL('/wasm/libffmpeg.js', window.location.origin).href
     let ffmpegModule: { default?: (options: { locateFile: () => string }) => Promise<IFFModule> }
     try {
@@ -64,7 +64,8 @@ export class FFWasmPlayer {
     }
     this.bindCallbacks()
     this.bindEvents()
-    await this.loadFromUrl(defaultSource)
+    if (defaultSource)
+      await this.loadFromUrl(defaultSource)
   }
 
   async loadFromUrl(url: string) {
