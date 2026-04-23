@@ -13,3 +13,7 @@ package-lock.json
 *.wasm
 *.mov
 *.MOV
+.vscode
+.DS_Store
+/xcuserdata/
+/xcshareddata/
