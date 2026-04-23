@@ -3,7 +3,7 @@ import type { DecodeYUVCallback, IFFModule, IVideoInfo, IYUVObject } from './typ
 
 export class FFWasmPlayer {
   private readonly pageHorizontalPadding = 24
-  private readonly reservedUiHeight = 220
+  private readonly reservedUiHeight = 210
   private readonly canvas: HTMLCanvasElement
   private readonly controller: HTMLInputElement
   private readonly playBtn: HTMLButtonElement
@@ -111,26 +111,8 @@ export class FFWasmPlayer {
   }
 
   private bindEvents() {
-    this.playBtn.addEventListener('click', () => this.play())
+    this.playBtn.addEventListener('click', () => this.restartFromBeginning())
     this.stopBtn.addEventListener('click', () => this.pause())
-    this.controller.addEventListener('mousedown', () => {
-      if (!this.handle)
-        return
-      this.module._ffwasm_hold_seek(this.handle, 1)
-      this.pause()
-    })
-    this.controller.addEventListener('change', () => {
-      const info = this.videoInfo
-      if (!info || !this.handle)
-        return
-      const pts = (Number(this.controller.value || '0') / 100) * info.duration
-      const ret = this.module._ffwasm_seek_frame(this.handle, pts, this.decodeCallbackPtr)
-      if (ret < 0)
-        console.error('_ffwasm_seek_frame failed', ret, pts)
-      this.module._ffwasm_hold_seek(this.handle, 0)
-      this.lastDrawPts = pts
-      this.startTs = Date.now() - pts
-    })
     window.addEventListener('resize', () => {
       const info = this.videoInfo
       if (info)
@@ -213,6 +195,19 @@ export class FFWasmPlayer {
     const ret = this.drawAt(pts)
     if (ret >= 0)
       this.rafId = requestAnimationFrame(this.tick)
+  }
+
+  private restartFromBeginning() {
+    if (!this.handle)
+      return
+    this.pause()
+    this.lastDrawPts = 0
+    this.pauseAt = 0
+    this.controller.value = '0'
+    const ret = this.module._ffwasm_seek_frame(this.handle, 0, this.decodeCallbackPtr)
+    if (ret < 0)
+      console.error('_ffwasm_seek_frame failed', ret, 0)
+    this.play()
   }
 
   private play() {

@@ -29,15 +29,16 @@
         overflow: hidden;
       }
       #video-controller {
-        margin: 0 0 0 -2px;
-        padding: 0;
+        margin: 6px 0 0;
+        pointer-events: none;
+        opacity: 0.9;
       }
     </style>
   </head>
   <body>
     <div id="app">
       <canvas id="video-canvas"></canvas>
-      <input id="video-controller" type="range" min="0" max="100" value="0" />
+      <input id="video-controller" type="range" min="0" max="100" value="0" disabled />
       <div style="margin: 8px 0;">
         <input id="video-file" type="file" accept="video/*" />
       </div>
