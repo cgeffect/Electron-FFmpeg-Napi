@@ -2,13 +2,31 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Vite + TS</title>
     <style>
-      #id {
-        display: flex; 
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+      }
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        font-family: sans-serif;
+      }
+      #app {
+        box-sizing: border-box;
+        width: 100%;
+        height: 100%;
+        padding: 8px 12px;
+        display: flex;
         flex-direction: column;
+        align-items: center;
+        overflow: hidden;
       }
       #video-controller {
         margin: 0 0 0 -2px;

@@ -27,10 +27,16 @@ function renderStatus(text: string, type: 'normal' | 'loading' | 'error' = 'norm
   statusEl.style.color = type === 'error' ? '#ff6b6b' : type === 'loading' ? '#ffd166' : ''
 }
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error)
+    return error.message
+  return String(error)
+}
+
 ;(async () => {
   try {
     const player = new FFWasmPlayer()
-    const defaultSource = '/11.mp4'
+    const defaultSource = '/640.mp4'
     renderStatus('正在加载默认素材...', 'loading')
     await player.init(defaultSource)
     renderVideoMeta(defaultSource, player.getVideoInfo())
@@ -50,12 +56,12 @@ function renderStatus(text: string, type: 'normal' | 'loading' | 'error' = 'norm
       }
       catch (error) {
         console.error('[ffwasm] load local file failed', error)
-        renderStatus(`加载失败: ${file.name}`, 'error')
+        renderStatus(`加载失败: ${file.name} (${errorMessage(error)})`, 'error')
       }
     })
   }
   catch (error) {
     console.error('[ffwasm] init failed', error)
-    renderStatus('初始化失败，请检查 wasm 和视频资源', 'error')
+    renderStatus(`初始化失败: ${errorMessage(error)}`, 'error')
   }
 })()

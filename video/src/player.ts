@@ -2,6 +2,8 @@ import { DrawYuv } from './helper.js'
 import type { DecodeYUVCallback, IFFModule, IVideoInfo, IYUVObject } from './types'
 
 export class FFWasmPlayer {
+  private readonly pageHorizontalPadding = 24
+  private readonly reservedUiHeight = 220
   private readonly canvas: HTMLCanvasElement
   private readonly controller: HTMLInputElement
   private readonly playBtn: HTMLButtonElement
@@ -17,6 +19,15 @@ export class FFWasmPlayer {
   private startTs = 0
   private pauseAt = 0
   private lastDrawPts = 0
+
+  private heapU8() {
+    if (this.module.HEAPU8)
+      return this.module.HEAPU8
+    const buffer = this.module.wasmMemory?.buffer
+    if (!buffer)
+      throw new Error('wasm heap is unavailable (missing HEAPU8 and wasmMemory)')
+    return new Uint8Array(buffer)
+  }
 
   constructor() {
     const canvas = document.getElementById('video-canvas') as HTMLCanvasElement | null
@@ -34,9 +45,23 @@ export class FFWasmPlayer {
   }
 
   async init(defaultSource = './assets/11.mp4') {
-    const ffmpegModule = await import('/wasm/libffmpeg.js')
-    const ffmpegInit = ffmpegModule.default as (options: { locateFile: () => string }) => Promise<IFFModule>
-    this.module = await ffmpegInit({ locateFile: () => '/wasm/libffmpeg.wasm' })
+    const runtimeUrl = new URL('/wasm/libffmpeg.js', window.location.origin).href
+    let ffmpegModule: { default?: (options: { locateFile: () => string }) => Promise<IFFModule> }
+    try {
+      ffmpegModule = await import(/* @vite-ignore */ runtimeUrl)
+    }
+    catch (error) {
+      throw new Error(`load runtime failed: ${String(error)}`)
+    }
+    if (!ffmpegModule.default)
+      throw new Error('runtime module has no default initializer')
+    const ffmpegInit = ffmpegModule.default
+    try {
+      this.module = await ffmpegInit({ locateFile: () => '/wasm/libffmpeg.wasm' })
+    }
+    catch (error) {
+      throw new Error(`initialize wasm failed: ${String(error)}`)
+    }
     this.bindCallbacks()
     this.bindEvents()
     await this.loadFromUrl(defaultSource)
@@ -62,9 +87,10 @@ export class FFWasmPlayer {
 
   private bindCallbacks() {
     const drawYUVFrame: DecodeYUVCallback = (yAddr, uAddr, vAddr, yLen, uLen, vLen, width, height) => {
-      const yData = this.module.HEAPU8.subarray(yAddr, yAddr + yLen * height)
-      const uData = this.module.HEAPU8.subarray(uAddr, uAddr + (uLen * height) / 2)
-      const vData = this.module.HEAPU8.subarray(vAddr, vAddr + (vLen * height) / 2)
+      const heapU8 = this.heapU8()
+      const yData = heapU8.subarray(yAddr, yAddr + yLen * height)
+      const uData = heapU8.subarray(uAddr, uAddr + (uLen * height) / 2)
+      const vData = heapU8.subarray(vAddr, vAddr + (vLen * height) / 2)
       const frame: IYUVObject = {
         yData: new Uint8Array(yData),
         uData: new Uint8Array(uData),
@@ -105,6 +131,11 @@ export class FFWasmPlayer {
       this.lastDrawPts = pts
       this.startTs = Date.now() - pts
     })
+    window.addEventListener('resize', () => {
+      const info = this.videoInfo
+      if (info)
+        this.setStyle(info.width, info.height)
+    })
   }
 
   private resetPlaybackState() {
@@ -134,7 +165,8 @@ export class FFWasmPlayer {
   private openVideo(videoData: ArrayBuffer) {
     this.closeCurrentVideo()
     this.videoDataPtr = this.module._malloc(videoData.byteLength)
-    const heap = new Uint8Array(this.module.HEAPU8.buffer, this.videoDataPtr, videoData.byteLength)
+    const heapU8 = this.heapU8()
+    const heap = new Uint8Array(heapU8.buffer, this.videoDataPtr, videoData.byteLength)
     heap.set(new Uint8Array(videoData))
 
     this.handle = this.module._ffwasm_decode_open(this.videoDataPtr, videoData.byteLength, this.infoCallbackPtr)
@@ -148,9 +180,14 @@ export class FFWasmPlayer {
   private setStyle(width: number, height: number) {
     this.canvas.width = width
     this.canvas.height = height
-    this.canvas.style.width = `${width}px`
-    this.canvas.style.height = `${height}px`
-    this.controller.style.width = `${width + 4}px`
+    const maxDisplayWidth = Math.max(1, window.innerWidth - this.pageHorizontalPadding)
+    const maxDisplayHeight = Math.max(1, window.innerHeight - this.reservedUiHeight)
+    const ratio = Math.min(1, maxDisplayWidth / width, maxDisplayHeight / height)
+    const displayWidth = Math.max(1, Math.floor(width * ratio))
+    const displayHeight = Math.max(1, Math.floor(height * ratio))
+    this.canvas.style.width = `${displayWidth}px`
+    this.canvas.style.height = `${displayHeight}px`
+    this.controller.style.width = `${displayWidth + 4}px`
   }
 
   private drawAt(pts: number) {

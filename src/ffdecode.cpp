@@ -332,7 +332,7 @@ static int _ff_send_video_packet(FFCodecContext *ioCodecCtx) {
                 return ret;
             } else if (ret == AVERROR(EAGAIN)) {
 //                continue; //这里需要缓存, 尝试再次发送
-                av_log(NULL, AV_LOG_ERROR, "ff_decode_video_packet ret %d, %s\n", ret, av_err2str(ret));
+                av_log(NULL, AV_LOG_DEBUG, "ff_decode_video_packet EAGAIN ret %d, %s\n", ret, av_err2str(ret));
                 return ret; //验证下是否需要特殊处理???
             } else {
                 av_log(NULL, AV_LOG_ERROR, "ERROR: read error code %d, %s \n", ret, av_err2str(ret));
@@ -539,7 +539,7 @@ static int ff_decode_frame_unit(FFVideoState *videoState, float consume_pts, AVF
                 }
             } else {
                 if (AVERROR(EAGAIN) == ret) {
-                    av_log(NULL, AV_LOG_ERROR, "ERROR: decode frame AVERROR(EAGAIN) consume_pts %f\n", consume_pts);
+                    av_log(NULL, AV_LOG_DEBUG, "decode frame EAGAIN consume_pts %f\n", consume_pts);
                     break;
                 } else if (AVERROR_EOF == ret) {
                     av_log(NULL, AV_LOG_ERROR, "ERROR: decode frame AVERROR_EOF consume_pts %f\n", consume_pts);
@@ -625,7 +625,8 @@ int ffdecode::ff_decode_init(uint8_t *heapData, size_t file_len, int pix_fmt, co
         videoState->pixelFormat = AV_PIX_FMT_RGBA;
     }
 
-    av_log_set_level(AV_LOG_DEBUG);
+    // Keep browser console readable: avoid ffmpeg debug spam in wasm runtime.
+    av_log_set_level(AV_LOG_WARNING);
     ioCodecCtx->avio_ctx_buffer_size = AVIO_BUFFER_SIZE;
 
     ioBuffer->ptr = heapData;

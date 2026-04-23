@@ -26,7 +26,8 @@ export type DecodeYUVCallback = (
 ) => void
 
 export interface IFFModule {
-  HEAPU8: Uint8Array
+  HEAPU8?: Uint8Array
+  wasmMemory?: WebAssembly.Memory
   addFunction: (func: (...args: number[]) => void, sig: string) => number
   removeFunction?: (ptr: number) => void
   _malloc: (size: number) => number
