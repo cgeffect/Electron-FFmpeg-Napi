@@ -37,6 +37,30 @@ npm install
 npm run build
 ```
 
+## Electron 播放器（`napi/web`）
+
+`napi/web` 下提供了一个 Electron 壳，流程是：
+
+- Renderer: 控制 UI + Canvas(WebGL) 渲染 YUV
+- Preload: 暴露受限 IPC API
+- Main: 调用 N-API 解码并回传帧数据
+
+运行方式：
+
+```bash
+cd napi
+npm install
+npm run build
+npm run electron
+```
+
+界面支持：
+
+- 打开本地视频文件
+- 播放 / 暂停
+- 拖动进度条（内部走 `holdSeek + seekFrame`）
+- 正常时间轴连续解码播放（`decodeFrame`）
+
 ## 运行示例
 
 ```bash
@@ -60,6 +84,18 @@ if (frame) {
   // frame.y frame.u frame.v are Buffers
 }
 addon.close(handle)
+```
+
+也可以用更简化的 JS 封装：
+
+```js
+const fs = require('fs')
+const { NativePlayer } = require('./index')
+
+const player = new NativePlayer()
+player.openFromBuffer(fs.readFileSync('./640.mp4'))
+const frame = player.decodeAt(1000)
+player.close()
 ```
 
 ## 迁移说明

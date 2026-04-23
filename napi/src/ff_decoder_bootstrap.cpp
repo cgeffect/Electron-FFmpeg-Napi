@@ -116,20 +116,17 @@ int FFDecoderBootstrap::SetupRotation() {
 		codecCtx_->rotateHeight = codecCtx_->avcodec_context->height;
 	}
 
-	enum AVPixelFormat srcPixFmt = codecCtx_->avcodec_context->pix_fmt;
-	int srcWidth = codecCtx_->avcodec_context->width;
-	int srcHeight = codecCtx_->avcodec_context->height;
+	enum AVPixelFormat dstPixFmt = state_->pixelFormat;
 	int dstWidth = codecCtx_->rotateWidth;
 	int dstHeight = codecCtx_->rotateHeight;
 
 	codecCtx_->rotateFrame = av_frame_alloc();
-	codecCtx_->rotateFrame->format = srcPixFmt;
-	int ret = av_image_alloc(codecCtx_->rotateFrame->data, codecCtx_->rotateFrame->linesize, dstWidth, dstHeight, srcPixFmt, 1);
+	codecCtx_->rotateFrame->format = dstPixFmt;
+	int ret = av_image_alloc(codecCtx_->rotateFrame->data, codecCtx_->rotateFrame->linesize, dstWidth, dstHeight, dstPixFmt, 1);
 	if (ret < 0) return ret;
 	codecCtx_->rotateFrame->width = dstWidth;
 	codecCtx_->rotateFrame->height = dstHeight;
-	codecCtx_->sws_context = sws_getContext(srcWidth, srcHeight, srcPixFmt, dstWidth, dstHeight, srcPixFmt, sws_flags, NULL, NULL, NULL);
-	return codecCtx_->sws_context ? 0 : AVERROR(ENOMEM);
+	return 0;
 }
 
 int FFDecoderBootstrap::ParseVideoMeta() {

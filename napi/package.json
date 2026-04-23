@@ -7,13 +7,15 @@
   "scripts": {
     "build": "node-gyp rebuild",
     "clean": "node-gyp clean",
-    "demo": "node demo.js"
+    "demo": "node demo.js",
+    "electron": "electron web/main.js"
   },
   "dependencies": {
     "bindings": "^1.5.0",
     "node-addon-api": "^8.2.1"
   },
   "devDependencies": {
+    "electron": "^37.3.1",
     "node-gyp": "^11.0.0"
   }
 }

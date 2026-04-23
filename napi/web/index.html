@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>N-API Video Player</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="toolbar">
+    <button id="pick-btn">Open Video</button>
+    <button id="play-btn">Play</button>
+    <button id="pause-btn">Pause</button>
+    <input id="progress" type="range" min="0" max="100" value="0" />
+  </div>
+  <div id="meta">No video loaded</div>
+  <canvas id="video-canvas"></canvas>
+  <script type="module" src="./renderer.js"></script>
+</body>
+</html>

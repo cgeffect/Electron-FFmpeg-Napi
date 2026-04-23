@@ -1,0 +1,28 @@
+body {
+  margin: 0;
+  background: #111;
+  color: #eee;
+  font-family: Arial, sans-serif;
+}
+
+.toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+}
+
+#progress {
+  flex: 1;
+}
+
+#meta {
+  padding: 0 12px 12px;
+  color: #9fd3ff;
+}
+
+#video-canvas {
+  display: block;
+  margin: 0 auto 12px;
+  background: #000;
+}

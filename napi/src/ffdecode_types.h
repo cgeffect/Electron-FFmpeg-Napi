@@ -67,6 +67,7 @@ struct FFCodecContext {
 	int avio_ctx_buffer_size = 0;
 
 	AVFrame* swsFrame = nullptr;
+	AVFrame* displayFrame = nullptr;
 	SwsContext* sws_context = nullptr;
 	int video_stream_index = -1;
 	AVStream* video_stream = nullptr;
@@ -105,7 +106,7 @@ enum FF_DECODE_EVENT {
 struct FFVideoState {
 	float video_consume_pts = 0.0f;
 	float video_prev_consume_pts = 0.0f;
-	float video_decode_frame_pts = 0.0f;
+	float video_decode_frame_pts = -1.0f;
 	FFStrategyState strategy = STRATEGY_NONE;
 
 	float threshold = 0.0f;

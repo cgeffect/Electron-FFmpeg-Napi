@@ -360,32 +360,20 @@ static int _ff_receive_video_frame(FFCodecContext *ioCodecCtx, AVFrame *frame) {
      * */
     // av_frame_unref(frame);
     if (ret == 0) {
-        //
-        if (ioCodecCtx->avcodec_context->width != frame->linesize[0]) {
-            int height = sws_scale(ioCodecCtx->sws_context,
-                                   (const uint8_t *const *)ioCodecCtx->srcFrame->data, ioCodecCtx->srcFrame->linesize,
-                                   0, ioCodecCtx->srcFrame->height,
-                                   ioCodecCtx->swsFrame->data,
-                                   ioCodecCtx->swsFrame->linesize);
-            if (height <= 0) {
-                av_log(NULL, AV_LOG_ERROR, "decoderPacket sws_scale error, height is %d\n", height);
-                return height;
-            }
-            if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
-                _ff_yuv_rotate(ioCodecCtx->rotate, ioCodecCtx->swsFrame, ioCodecCtx->rotateFrame);
-                ioCodecCtx->swsFrame = ioCodecCtx->rotateFrame;
-            }
-        } else {
-            if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
-                _ff_yuv_rotate(ioCodecCtx->rotate, frame, ioCodecCtx->rotateFrame);
-                ioCodecCtx->swsFrame = ioCodecCtx->rotateFrame;
-            } else {
-                ioCodecCtx->swsFrame = frame;
-            }
+        int height = sws_scale(ioCodecCtx->sws_context,
+                               (const uint8_t *const *)frame->data, frame->linesize,
+                               0, frame->height,
+                               ioCodecCtx->swsFrame->data,
+                               ioCodecCtx->swsFrame->linesize);
+        if (height <= 0) {
+            av_log(NULL, AV_LOG_ERROR, "decoderPacket sws_scale error, height is %d\n", height);
+            return height;
         }
-
-        //统一处理, 转成rgba
-        
+        ioCodecCtx->displayFrame = ioCodecCtx->swsFrame;
+        if (ioCodecCtx->rotate == 90 || ioCodecCtx->rotate == 270 || ioCodecCtx->rotate == 180) {
+            _ff_yuv_rotate(ioCodecCtx->rotate, ioCodecCtx->swsFrame, ioCodecCtx->rotateFrame);
+            ioCodecCtx->displayFrame = ioCodecCtx->rotateFrame;
+        }
         return ret;
     } else {
         return ret;
@@ -456,8 +444,10 @@ public:
 		}
 
 		state_->video_consume_pts = consume_pts;
-		if ((state_->video_decode_frame_pts >= consume_pts || fabsf(state_->video_decode_frame_pts - consume_pts) < fabsf(state_->threshold))) {
-			*outFrame = codecCtx_->swsFrame;
+		if (codecCtx_->displayFrame != NULL
+			&& state_->video_decode_frame_pts >= 0
+			&& (state_->video_decode_frame_pts >= consume_pts || fabsf(state_->video_decode_frame_pts - consume_pts) < fabsf(state_->threshold))) {
+			*outFrame = codecCtx_->displayFrame;
 			ff_log("hit cache consume_pts %f cache pts %f", consume_pts, state_->video_decode_frame_pts);
 			return 0;
 		}
@@ -519,7 +509,7 @@ public:
 
 					state_->video_decode_frame_pts = ptsMs;
 					if (fabsf(ptsMs - consume_pts) < fabsf(state_->threshold)) {
-						*outFrame = codecCtx_->swsFrame;
+						*outFrame = codecCtx_->displayFrame;
 						find_flag = true;
 						break;
 					}
@@ -528,7 +518,7 @@ public:
 						break;
 					}
 					if (seek_flag && state_->video_decode_frame_pts > consume_pts) {
-						*outFrame = codecCtx_->swsFrame;
+						*outFrame = codecCtx_->displayFrame;
 						find_flag = true;
 						break;
 					}
