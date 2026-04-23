@@ -1,8 +1,0 @@
-*.dSYM
-build
-dist
-node_modules
-.vscode
-.DS_Store
-/res/wasm/
-/emsdk/
