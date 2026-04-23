@@ -1,0 +1,19 @@
+{
+  "name": "ffmpeg-player-napi-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node.js N-API prototype for ffmpeg player core",
+  "main": "index.js",
+  "scripts": {
+    "build": "node-gyp rebuild",
+    "clean": "node-gyp clean",
+    "demo": "node demo.js"
+  },
+  "dependencies": {
+    "bindings": "^1.5.0",
+    "node-addon-api": "^8.2.1"
+  },
+  "devDependencies": {
+    "node-gyp": "^11.0.0"
+  }
+}

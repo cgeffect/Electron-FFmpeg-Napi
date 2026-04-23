@@ -4,7 +4,9 @@
       "target_name": "ffmpeg_player_napi",
       "sources": [
         "src/addon.cpp",
+        "src/ff_decoder_bootstrap.cpp",
         "src/ffdecode.cpp",
+        "src/ff_resource_guard.cpp",
         "src/ffrotate.cpp"
       ],
       "include_dirs": [

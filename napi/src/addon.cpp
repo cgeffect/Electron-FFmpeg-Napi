@@ -9,7 +9,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 }
 
-#include "ffdecode.h"
+#include "ffdecode_api.h"
 
 namespace {
 
