@@ -1,0 +1,14 @@
+prefix=/Users/jason/Desktop/17-RTMP流媒体实战/2-3-4-RTMP实战/rtmp-publish-20210903/ffmpeg-4.4.1/deploy/
+exec_prefix=${prefix}
+libdir=/Users/jason/Desktop/17-RTMP流媒体实战/2-3-4-RTMP实战/rtmp-publish-20210903/ffmpeg-4.4.1/deploy//lib
+includedir=/Users/jason/Desktop/17-RTMP流媒体实战/2-3-4-RTMP实战/rtmp-publish-20210903/ffmpeg-4.4.1/deploy//include
+
+Name: libavformat
+Description: FFmpeg container format library
+Version: 58.76.100
+Requires: libavcodec >= 58.134.100, libswresample >= 3.9.100, libavutil >= 56.70.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavformat -lm -lbz2 -L/usr/lib -lz -Wl,-framework,CoreFoundation -Wl,-framework,Security
+Libs.private: 
+Cflags: -I${includedir}

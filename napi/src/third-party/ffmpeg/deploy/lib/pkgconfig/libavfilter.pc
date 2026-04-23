@@ -1,0 +1,14 @@
+prefix=/Users/jason/Desktop/17-RTMP流媒体实战/2-3-4-RTMP实战/rtmp-publish-20210903/ffmpeg-4.4.1/deploy/
+exec_prefix=${prefix}
+libdir=/Users/jason/Desktop/17-RTMP流媒体实战/2-3-4-RTMP实战/rtmp-publish-20210903/ffmpeg-4.4.1/deploy//lib
+includedir=/Users/jason/Desktop/17-RTMP流媒体实战/2-3-4-RTMP实战/rtmp-publish-20210903/ffmpeg-4.4.1/deploy//include
+
+Name: libavfilter
+Description: FFmpeg audio/video filtering library
+Version: 7.110.100
+Requires: libswscale >= 5.9.100, libpostproc >= 55.9.100, libavformat >= 58.76.100, libavcodec >= 58.134.100, libswresample >= 3.9.100, libavutil >= 56.70.100
+Requires.private: 
+Conflicts:
+Libs: -L${libdir}  -lavfilter -framework OpenGL -framework OpenGL -pthread -lm -framework CoreImage -framework AppKit
+Libs.private: 
+Cflags: -I${includedir}
