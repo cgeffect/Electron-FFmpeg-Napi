@@ -68,6 +68,8 @@ macOS 下对 `.node` 使用 **`-undefined dynamic_lookup`**，使 `napi_*` 在�
 
 ## Electron 播放器（`napi/web`）
 
+![Electron 播放器界面](screenshot.png)
+
 `napi/web` 下提供了一个 Electron 壳，流程是：
 
 - Renderer: 控制 UI + Canvas(WebGL) 渲染 YUV
