@@ -1,6 +1,6 @@
 # ffmpeg-player N-API prototype
 
-这是一个独立的 Node.js + N-API 原型工程，不会改动现有 WASM 代码路径。
+这是一个独立的 Node.js + N-API 原型工程。
 
 ## 能力
 
@@ -17,17 +17,6 @@
 
 你需要本机可链接的 FFmpeg 开发库（`avformat/avcodec/avutil/swscale`）。
 
-默认会尝试：
-
-- include: `/opt/homebrew/include`、`/usr/local/include`
-- lib: `/opt/homebrew/lib`、`/usr/local/lib`
-
-如果你的路径不同，可在构建前设置：
-
-```bash
-export FFMPEG_INCLUDE_DIR=/path/to/include
-export FFMPEG_LIB_DIR=/path/to/lib
-```
 
 ## 构建
 
