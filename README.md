@@ -1,6 +1,7 @@
 # ffmpeg-player N-API prototype
 
 这是一个独立的 Node.js + N-API 原型工程。
+![Electron 播放器界面](screenshot.png)
 
 ## 能力
 
