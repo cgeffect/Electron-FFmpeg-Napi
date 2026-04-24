@@ -28,7 +28,7 @@
 构建命令（见 `package.json`）：
 
 ```bash
-npm run build
+npm run build:gyp
 ```
 
 等价于 `node-gyp rebuild`，会清理并重新编译。产出物路径一般为：
@@ -45,8 +45,8 @@ npm run build
 
 ### 3.1 从构建到 `require` 可用的步骤顺序
 
-1. **`npm run build`（node-gyp）**  
-   按 **`binding.gyp`** 编译、链接 → 产出 **`build/Release/ffmpeg_player_napi.node`**。
+1. **`npm run build:gyp`（node-gyp）**  
+   按 **`binding.gyp`** 编译、链接 → 产出 **`build/Release/ffmpeg_player_napi.node`**。（若用 CMake，则为 **`npm run build:cmake`** + **`CMakeLists.txt`**。）
 
 2. **JS 执行 `require`**（本仓库中为 `index.js` 里 **`bindings({ bindings: 'ffmpeg_player_napi', ... })`**）  
    Node 解析路径并准备加载上述 **`.node`**。
@@ -140,7 +140,7 @@ const native = bindings({
 2. 在 **`addon.cpp`** 中新增 `Napi::Value YourFuncWrapped(const Napi::CallbackInfo& info)`，做好参数校验与返回值构造。
 3. 在 **`Init`** 里 `exports.Set("yourFunc", Napi::Function::New(env, YourFuncWrapped));`。
 4. **一般不需要改 `binding.gyp`**，除非新增 **`.cpp` 源文件**（把新文件加入 `sources`）。
-5. **`npm run build`** 后，在 JS 里通过 `native.yourFunc(...)` 调用。
+5. **`npm run build:gyp`** 或 **`npm run build:cmake`** 后，在 JS 里通过 `native.yourFunc(...)` 调用。
 
 ---
 

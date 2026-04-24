@@ -1,0 +1,10 @@
+# 未生成根目录 compile_commands.json 时的兜底；生成后 clangd 优先用 compile_commands（与 electron-rendering 行为一致）。
+# 生成：npm run ide:compile-commands 或 npm run build:cmake
+CompileFlags:
+  Add:
+    - -std=c++17
+    - -I./node_modules/node-addon-api
+    - -I./src
+    - -I./src/core
+    - -I./src/third-party/ffmpeg/deploy/include
+    - -DNAPI_DISABLE_CPP_EXCEPTIONS

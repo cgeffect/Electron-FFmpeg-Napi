@@ -1,0 +1,20 @@
+{
+  "version": 4,
+  "configurations": [
+    {
+      "name": "ffmpeg_wasm_napi",
+      "includePath": [
+        "${workspaceFolder}/node_modules/node-addon-api",
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/src/core",
+        "${workspaceFolder}/src/third-party/ffmpeg/deploy/include"
+      ],
+      "defines": ["NAPI_DISABLE_CPP_EXCEPTIONS"],
+      "compilerPath": "/usr/bin/clang++",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "macos-clang-arm64",
+      "compileCommands": "${workspaceFolder}/compile_commands.json"
+    }
+  ]
+}

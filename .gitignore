@@ -1,8 +1,11 @@
-*.dSYM
 build
+build-gyp
+build-cmake
 dist
 node_modules
-.vscode
+# 仅提交 c_cpp_properties.json，其余 .vscode 仍本地忽略
+/.vscode/*
+!/.vscode/c_cpp_properties.json
+compile_commands.json
 .DS_Store
-/res/wasm/
-/emsdk/
+/.cache/

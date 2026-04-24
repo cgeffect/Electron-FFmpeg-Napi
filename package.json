@@ -5,8 +5,11 @@
   "description": "Node.js N-API prototype for ffmpeg player core",
   "main": "index.js",
   "scripts": {
-    "build": "node-gyp rebuild",
-    "clean": "node-gyp clean",
+    "build:gyp": "node-gyp rebuild",
+    "build:cmake": "cmake -B build-cmake -S . -DCMAKE_BUILD_TYPE=Release && cmake -E copy_if_different build-cmake/compile_commands.json compile_commands.json && cmake --build build-cmake --config Release",
+    "ide:compile-commands": "cmake -B build-cmake -S . -DCMAKE_BUILD_TYPE=Release && cmake -E copy_if_different build-cmake/compile_commands.json compile_commands.json",
+    "clean:gyp": "node-gyp clean",
+    "clean:cmake": "cmake -E rm -rf build-cmake && cmake -E rm -f compile_commands.json",
     "demo": "node cli/demo.js",
     "electron": "electron web/main.js"
   },
@@ -16,6 +19,7 @@
   },
   "devDependencies": {
     "electron": "^37.3.1",
+    "node-api-headers": "^1.1.0",
     "node-gyp": "^11.0.0"
   }
 }
