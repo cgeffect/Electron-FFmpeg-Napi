@@ -7,7 +7,7 @@
   "scripts": {
     "build": "node-gyp rebuild",
     "clean": "node-gyp clean",
-    "demo": "node demo.js",
+    "demo": "node cli/demo.js",
     "electron": "electron web/main.js"
   },
   "dependencies": {

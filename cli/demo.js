@@ -2,7 +2,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const addon = require('./index');
+const addon = require('../index');
 
 function run() {
   const filePath = process.argv[2] || path.join(__dirname, '../res/640.mp4');
