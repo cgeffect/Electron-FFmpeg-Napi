@@ -4,14 +4,15 @@
       "target_name": "ffmpeg_player_napi",
       "sources": [
         "src/addon.cpp",
-        "src/ff_decoder_bootstrap.cpp",
-        "src/ffdecode.cpp",
-        "src/ff_resource_guard.cpp",
-        "src/ffrotate.cpp"
+        "src/core/ff_decoder_bootstrap.cpp",
+        "src/core/ffdecode.cpp",
+        "src/core/ff_resource_guard.cpp",
+        "src/core/ffrotate.cpp"
       ],
       "include_dirs": [
         "<!@(node -p \"require('node-addon-api').include\")",
         "src",
+        "src/core",
         "src/third-party/ffmpeg/deploy/include"
       ],
       "libraries": [

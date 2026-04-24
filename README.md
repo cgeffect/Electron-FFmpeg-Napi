@@ -100,5 +100,5 @@ player.close()
 
 ## 迁移说明
 
-当前原型使用 `napi/src` 下的本地源码进行构建（`ffdecode.cpp`、`ffrotate.cpp`、`third-party/libffmpeg/include`）。  
-因此 `napi` 目录可以作为独立原型直接迁移，只需要保证目标机器安装了可链接的 FFmpeg 动态库。
+播放器与 N-API 绑定源码集中在 `src/core/`（解码、引导、资源释放、旋转等），FFmpeg 头文件与静态库在 `src/third-party/ffmpeg/deploy/`。  
+迁移时保留 `src/core` 与 `src/third-party` 目录结构，并保证本机或目标环境能正确链接 FFmpeg 库即可。
